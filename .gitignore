@@ -1,0 +1,42 @@
+# =============================================================================
+# GOLDEN RULE: NEVER COMMIT GAME FILES.
+# This repository holds ONLY our own original art and documentation.
+# No extracted textures, meshes, or packaged game/mod content belongs here.
+# The patterns below exist to keep those files out by accident. The real
+# safeguard is you being careful. When in doubt, leave it out.
+# =============================================================================
+
+# --- Unreal Engine / game assets (never commit these) ---
+*.pak
+*.utoc
+*.ucas
+*.uasset
+*.uexp
+*.ubulk
+*.umap
+
+# --- Build tool binaries, dotnet output, native libs ---
+bin/
+obj/
+*.dll
+*.so
+tools/retoc*
+
+# --- Operating system cruft ---
+.DS_Store
+Thumbs.db
+
+# --- Editor / IDE folders ---
+.vscode/
+.idea/
+
+# --- Local scratch / working directories (never for committed content) ---
+extract/
+work/
+refmods/
+
+# -----------------------------------------------------------------------------
+# NOTE: We deliberately do NOT ignore *.png. Our ORIGINAL source icon art
+# (PNG/SVG) lives in art/ and IS meant to be committed. Only the specific
+# game-asset extensions listed above are blocked, not our own artwork.
+# -----------------------------------------------------------------------------
