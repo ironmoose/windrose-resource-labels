@@ -112,16 +112,23 @@ background while you do something else.
    these properties exactly (they live in the **Details** panel on the
    right side of the Texture Editor):
    - **Texture Group:** `UI`
-   - **Compression Settings:** `UserInterface2D (BC7)`
+   - **Compression Settings:** `UserInterface2D (RGBA8)`
    - **sRGB:** checked (ON)
    - **Mip Gen Settings:** `NoMipmaps`
 
    These settings are chosen to match the game's own existing plaque icon
-   textures (which all follow the `T_PlaqueT02_*` naming pattern). If you
-   are ever able to inspect a real vanilla `T_PlaqueT02_*` texture's
-   settings directly (for example through a modding/extraction tool),
-   match those exactly instead of the values above. The values above are
-   the correct first attempt in the absence of that direct inspection.
+   textures (which all follow the `T_PlaqueT02_*` naming pattern). A note on
+   compression: in the UE5.6 dropdown, `UserInterface2D` is the purpose-built
+   UI setting and it stores the texture **uncompressed (RGBA8)**; `BC7` is a
+   separate, block-compressed option. Both load fine in-game (the mod only
+   *adds* a texture, so its format is independent of the game's own icons).
+   We use `UserInterface2D (RGBA8)` here: it is the named UI setting, it is
+   artifact-free on this clean line art, and at 256x256 the memory cost is
+   negligible. You can sanity-check later that it took effect by the cooked
+   `.uexp` size (about 262 KB for 256x256 RGBA8; BC7 would be about 64 KB).
+   If you are ever able to inspect a real vanilla `T_PlaqueT02_*` texture's
+   settings directly (for example through a modding/extraction tool), match
+   those exactly instead.
 6. Close the Texture Editor and save. The fastest way is
    **Ctrl+S** with the asset selected, or right-click the asset in the
    Content Browser and choose **Save**. You can also use
@@ -129,9 +136,9 @@ background while you do something else.
 
 ## Step 3: Packaging settings
 
-Before cooking, set two project-level packaging options. These control the
-format the cooked output uses, and they need to match what the game itself
-uses.
+Before cooking, set a few project-level options. The first two control the
+format the cooked output uses; the third makes sure your icon is actually
+included in the cook at all.
 
 1. In the main editor menu, go to **Edit > Project Settings**.
 2. In the left sidebar, scroll to **Project > Packaging**.
@@ -140,13 +147,33 @@ uses.
    - **Use Io Store:** ON (checked). This is UE 5.6's default, so it is
      likely already on, but confirm it.
    - **Use Pak File:** ON (checked).
-4. Leave versioning at its default for the first attempt. In UE 5.6 the
+4. **Add your icon's folder to "Additional Asset Directories to Cook."**
+   **This step is essential; do not skip it.** A plain cook only processes
+   assets that are *referenced* by a map or other loaded content. Your
+   imported icon is not referenced by anything yet (there is no map or
+   DataAsset using it), so without this setting the cook will finish
+   **successfully but silently skip your texture**, and no icon files will
+   appear in the output (you will only see `Engine/Content` folders).
+   - Still in **Project > Packaging** with Advanced options shown, find
+     **Additional Asset Directories to Cook** (an array property).
+   - Click the **+** to add an entry, then set its **Path** to
+     `/Game/UI` (or, if you prefer to be narrow, the exact
+     `/Game/UI/HUD/Building/Icons/BuildingBits` folder). Using `/Game/UI`
+     also covers future icons added under that tree.
+   - For reference, this writes the following into the project's
+     `Config/DefaultGame.ini`, which you could also add by hand instead of
+     using the UI:
+     ```
+     [/Script/UnrealEd.ProjectPackagingSettings]
+     +DirectoriesToAlwaysCook=(Path="/Game/UI")
+     ```
+5. Leave versioning at its default for the first attempt. In UE 5.6 the
    default is **unversioned** cooked packages (that is, do not turn on
    "Save Packages Without Version" manually if it is already the default,
    and do not turn it off). If the icon fails to load after your first
    attempt, see the "If it doesn't work" section below for the versioned
    fallback.
-5. Close the Project Settings window. There is no separate save step; these
+6. Close the Project Settings window. There is no separate save step; these
    settings are saved automatically to the project's config files.
 
 ## Step 4: Run the cook
@@ -154,9 +181,13 @@ uses.
 Now cook the project from the command line. This produces the actual
 game-ready binary texture files.
 
-1. Open a **Command Prompt** or **PowerShell** window on Windows (Start
+1. First, **fully close the Unreal Editor** (File > Exit). The cook launches
+   its own headless copy of the engine, and leaving the editor open on the
+   same project can cause file-lock conflicts in the `Saved/` folder. Make
+   sure you saved in Step 2 first.
+2. Open a **Command Prompt** or **PowerShell** window on Windows (Start
    menu, type `cmd` or `powershell`, press Enter).
-2. Run this exact command (copy and paste it as one line):
+3. Run this exact command (copy and paste it as one line):
 
    ```
    "C:\Program Files\Epic Games\UE_5.6\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" "C:\WindroseIcons\WindroseIcons.uproject" -run=cook -targetplatform=Windows
@@ -165,12 +196,14 @@ game-ready binary texture files.
    If you installed the engine to a different location, or created the
    project at a different path in Step 1, adjust the two quoted paths
    accordingly. Otherwise use the command exactly as written.
-3. This will print a lot of log output and can take a few minutes, even
+4. This will print a lot of log output and can take a few minutes, even
    though the project only contains one texture (Unreal cooks its engine
    and editor support content too, the first time). Let it run to
-   completion. A successful run ends without an error about the cook
-   failing.
-4. **Expected output location**, once the cook finishes:
+   completion. A successful run ends with a line like
+   `Success - 0 error(s), 0 warning(s)`. (On the very first cook you may see
+   a Windows Firewall prompt for Unreal's local `zenserver.exe`; allowing it
+   is expected and safe, it is a loopback-only service.)
+5. **Expected output location**, once the cook finishes:
 
    ```
    C:\WindroseIcons\Saved\Cooked\Windows\WindroseIcons\Content\UI\HUD\Building\Icons\BuildingBits\T_PlaqueT02_Iron.uasset
@@ -181,6 +214,13 @@ game-ready binary texture files.
    texture's bulk data landed in a separate file. All of these belong
    together; if you copy the icon anywhere later, copy all of the files
    that share the `T_PlaqueT02_Iron` name.
+
+   **If the cook reported success but this `.uasset` file is missing** (and
+   only `Engine\Content\...` folders show up under
+   `C:\WindroseIcons\Saved\Cooked\Windows`), you almost certainly skipped
+   the "Additional Asset Directories to Cook" setting in **Step 3, item 4**.
+   Go back and add it, then re-run this cook command. (Re-cooks are quick
+   once the first one has warmed the cache.)
 
 ## Step 5: Return to Fedora
 
@@ -225,7 +265,14 @@ prints) is a separate Fedora-side task, not part of this Windows guide.
 
 ## If it doesn't work
 
-**First fallback: try a versioned cook.** If the cooked icon causes an
+**First check: did the icon actually cook?** If the cook reported success
+but there is no `T_PlaqueT02_Iron.uasset` under
+`Saved\Cooked\Windows\WindroseIcons\Content\...`, you skipped the
+"Additional Asset Directories to Cook" setting in Step 3, item 4. That is
+the single most common failure with this kit. Add it and re-cook before
+looking at anything else below.
+
+**Next fallback: try a versioned cook.** If the cooked icon causes an
 error, a crash, or simply fails to show up when loaded in-game, the most
 likely culprit is the unversioned-vs-versioned packaging setting from Step
 3. Go back to **Edit > Project Settings > Project > Packaging**, and this
