@@ -30,6 +30,10 @@ Thumbs.db
 .vscode/
 .idea/
 
+# --- Python bytecode cache (art/ tooling + tests) ---
+__pycache__/
+*.pyc
+
 # --- Local scratch / working directories (never for committed content) ---
 extract/
 work/

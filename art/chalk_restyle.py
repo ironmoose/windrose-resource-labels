@@ -45,7 +45,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageFont
 
 # --------------------------------------------------------------------------
 # Palette / tuning
@@ -94,11 +94,84 @@ DESPECKLE_PASSES = 2
 ALPHA_SOLID = 40
 
 # Baked-plaque layout.
-PLAQUE_REF = (
+#
+# Board sourcing (empirically decided). We stripped the baked glyph from every
+# stock plaque and compared the remaining wood, board-to-board. The wood boards
+# are NOT identical across categories: they fall into three distinct templates
+# (different plank silhouette + wood tone), e.g. Ore/Clothing/Treasure share one
+# board (wood luma ~86), Wood/Alchemy/Trade/FoodIngridients another (~101), and
+# Ship/Food/Weapons a third (~103). Because they genuinely differ, we keep a
+# category -> stock-plaque map and composite each glyph onto its matching board
+# rather than reusing one generic board.
+PLAQUE_DIR = (
     Path(__file__).resolve().parents[1]
-    / ".." / "windrose-signs" / "gen" / "reference_icons" / "T_PlaqueT02_Ore.png"
+    / ".." / "windrose-signs" / "gen" / "reference_icons"
 )
-PLAQUE_GLYPH_FRACTION = 0.55   # new glyph occupies ~55% of the 256px board
+
+
+def _plaque_path(board: str) -> Path:
+    return PLAQUE_DIR / f"T_PlaqueT02_{board}.png"
+
+
+# category -> stock plaque board (the file the wood is taken from).
+CATEGORY_BOARD = {
+    "Metals": "Ore",
+    "Minerals": "Ore",
+    "Woods": "Wood",
+    "Textiles": "Clothing",
+    "AlchemyIngredients": "Alchemy",
+    "HealingPotions": "Alchemy",
+    "BuffElixirs": "Alchemy",
+    "AnimalHeads": "Alchemy",
+    "FoodIngredients": "FoodIngridients",
+    "CraftedFood": "Food",
+    "ShipParts": "Ship",
+    "TradeItems": "Trade",
+    "Coins": "Treasure",
+}
+DEFAULT_BOARD = "Ore"
+
+# Filename-keyword -> category classifier. Ordered most-specific first; the
+# first category whose keywords match a token wins. Boards only actually differ
+# between the groups above, so metal/mineral precision does not affect output.
+_CLASSIFY_RULES = [
+    ("Coins",              ("coin", "doubloon")),
+    ("Textiles",           ("fabric", "rope", "linen", "leather", "flax",
+                            "fiber", "feather", "tannin", "broadcloth",
+                            "rigging", "thread", "cloth")),
+    ("AnimalHeads",        ("boarhead", "staghead", "wolfhead", "trophy",
+                            "antler", "skull")),
+    ("HealingPotions",     ("healing",)),
+    ("BuffElixirs",        ("strength", "buff", "elixir", "potion")),
+    ("AlchemyIngredients", ("alchemical", "alchemy", "herb", "leaf", "aloe",
+                            "mushroom", "root")),
+    ("CraftedFood",        ("platter", "seafood", "meal", "stew", "cooked")),
+    ("TradeItems",         ("tradegoods", "trade", "provisions", "repairkit", "kit")),
+    ("FoodIngredients",    ("meat", "fish", "grain", "crop")),
+    ("ShipParts",          ("ship", "sail", "anchor", "hull")),
+    ("Woods",              ("wood", "plank", "beam", "bark", "hardwood",
+                            "mahogany", "stick", "tarred", "tar", "varnish",
+                            "resin", "log")),
+    ("Minerals",           ("coal", "clay", "quartz", "stone", "obsidian",
+                            "saltpeter", "sulfur", "gem", "crystal")),
+    ("Metals",             ("ingot", "iron", "copper", "silver", "gold",
+                            "tumbago", "toledo", "steel", "nugget", "ore",
+                            "metal", "enchanted", "ancient", "bronze")),
+]
+
+
+def classify_icon(filename: str) -> str:
+    """Map an item-icon filename to a resource category (see CATEGORY_BOARD)."""
+    low = Path(filename).stem.lower()
+    for category, keywords in _CLASSIFY_RULES:
+        if any(k in low for k in keywords):
+            return category
+    return "Metals"  # -> DEFAULT_BOARD
+
+
+def board_for_icon(filename: str) -> str:
+    """Pick the stock plaque board name for an item-icon filename."""
+    return CATEGORY_BOARD.get(classify_icon(filename), DEFAULT_BOARD)
 
 
 def _build_lut() -> np.ndarray:
@@ -122,21 +195,40 @@ CHALK_LUT = _build_lut()
 def _adaptive_despeckle(lum_u8: np.ndarray, threshold: float, passes: int) -> np.ndarray:
     """Remove isolated speckle from a uint8 luminance image.
 
-    A pixel is rewritten to its local 3x3 median only if it is the brightest
-    or darkest in its 3x3 window (i.e. a lone spike) AND it differs from the
-    median by more than ``threshold``. Edges and lines share their value with
-    neighbours along the feature, so they are not lone extremes and are kept.
+    A pixel is speckle only if it beats *every one of its 8 neighbours* by more
+    than ``threshold`` (a lone spike higher than all around it, or a lone pit
+    lower than all around it); it is then rewritten to the median of those 8
+    neighbours.
+
+    The neighbour comparison EXCLUDES the centre pixel, which is what keeps thin
+    lines alive: a pixel on a 1px line (straight or diagonal) shares its value
+    with the two collinear neighbours, so it never beats all 8 and is preserved.
+    The earlier version compared against a Max/Min filter that *included* the
+    centre, so every line pixel counted as a local extreme and got eroded -
+    that destroyed the wood-grain / rope-strand / coal detail the chalk look
+    needs.
     """
     out = lum_u8
+    h, w = out.shape
     for _ in range(max(0, passes)):
-        img = Image.fromarray(out, mode="L")
-        med = np.asarray(img.filter(ImageFilter.MedianFilter(3)), dtype=np.int16)
-        mx = np.asarray(img.filter(ImageFilter.MaxFilter(3)), dtype=np.int16)
-        mn = np.asarray(img.filter(ImageFilter.MinFilter(3)), dtype=np.int16)
         cur = out.astype(np.int16)
-        is_extreme = (cur >= mx) | (cur <= mn)
-        speckle = is_extreme & (np.abs(cur - med) > threshold)
-        out = np.where(speckle, med, cur).astype(np.uint8)
+        padded = np.pad(cur, 1, mode="edge")
+        # The 8 shifted neighbours (centre excluded), stacked as (8, H, W).
+        neigh = np.stack([
+            padded[0:h,     0:w],       # top-left
+            padded[0:h,     1:w + 1],   # top
+            padded[0:h,     2:w + 2],   # top-right
+            padded[1:h + 1, 0:w],       # left
+            padded[1:h + 1, 2:w + 2],   # right
+            padded[2:h + 2, 0:w],       # bottom-left
+            padded[2:h + 2, 1:w + 1],   # bottom
+            padded[2:h + 2, 2:w + 2],   # bottom-right
+        ], axis=0)
+        nmax = neigh.max(0)
+        nmin = neigh.min(0)
+        nmed = np.round(np.median(neigh, 0))
+        speckle = ((cur - nmax) > threshold) | ((nmin - cur) > threshold)
+        out = np.where(speckle, nmed, cur).astype(np.uint8)
     return out
 
 
@@ -177,16 +269,44 @@ def chalk_restyle(src_rgba: Image.Image) -> Image.Image:
 # Baked-plaque compositing
 # --------------------------------------------------------------------------
 
-def _load_plaque_backing() -> Image.Image:
-    """Load the stock Ore plaque and strip its baked-in chalk glyph, leaving a
-    clean wood board with the plaque's original alpha/framing intact.
+def _erode(mask: np.ndarray, iters: int = 1) -> np.ndarray:
+    """Binary-erode a 2D bool mask by ``iters`` pixels (4-connectivity).
 
-    The stock glyph is a bright chalk shape with a dark keyline. Both read far
-    from the mid-brown wood tone, so we strip pixels whose luminance deviates
-    strongly from the wood median - but only inside the central region, so the
-    corner nail heads and plank grooves near the edges survive.
+    numpy-only (no scipy). Used to pull the glyph-strip mask back from its
+    boundary so the strip never bleeds onto plank grooves / nail heads that
+    happen to sit right at the central-box edge.
     """
-    plaque = Image.open(PLAQUE_REF).convert("RGBA")
+    m = mask
+    for _ in range(max(0, iters)):
+        p = np.pad(m, 1, mode="constant", constant_values=False)
+        m = (m
+             & p[0:-2, 1:-1] & p[2:, 1:-1]      # up / down
+             & p[1:-1, 0:-2] & p[1:-1, 2:])     # left / right
+    return m
+
+
+# board name -> (clean RGBA board, stock-glyph bbox (x0, y0, x1, y1)). Cached
+# so each board is stripped/measured once per run.
+_BACKING_CACHE: dict[str, tuple[Image.Image, tuple[int, int, int, int]]] = {}
+
+
+def _load_plaque_backing(board: str = DEFAULT_BOARD):
+    """Strip the baked-in chalk glyph from a stock plaque, returning a clean
+    wood board plus the bounding box the stock glyph occupied.
+
+    The stock glyph is a bright chalk shape with a dark keyline; both read far
+    from the mid-brown wood tone, so we strip pixels whose luminance deviates
+    strongly from the wood median - but only inside a central box, and the strip
+    mask is eroded a couple of pixels so it does not nibble the plank grooves /
+    nail heads near the box boundary (fixes the earlier ~300px edge bleed).
+
+    The returned glyph bbox is measured from the *bright* stock glyph so the new
+    glyph can be sized to the exact framing the stock art used.
+    """
+    if board in _BACKING_CACHE:
+        return _BACKING_CACHE[board]
+
+    plaque = Image.open(_plaque_path(board)).convert("RGBA")
     arr = np.asarray(plaque, dtype=np.float32)
     rgb, alpha = arr[..., :3], arr[..., 3]
     body = alpha >= ALPHA_SOLID
@@ -197,32 +317,56 @@ def _load_plaque_backing() -> Image.Image:
     wood_band = body & (np.abs(lum - wood_lum) < 15)
     wood_col = rgb[wood_band].mean(0) if wood_band.any() else np.array([68.0, 48.0, 32.0])
 
-    # Central box (~72% of the board) where the stock glyph lives.
     h, w = lum.shape
     yy, xx = np.mgrid[0:h, 0:w]
-    central = (np.abs(xx - w / 2) < 0.36 * w) & (np.abs(yy - h / 2) < 0.36 * h)
 
-    glyph = body & central & (np.abs(lum - wood_lum) > 26)
+    # Measure the stock glyph from the bright chalk (well above wood) so the
+    # bbox is not thrown off by dark grain. Restrict to a generous central box.
+    meas_box = (np.abs(xx - w / 2) < 0.42 * w) & (np.abs(yy - h / 2) < 0.42 * h)
+    bright = body & meas_box & (lum > wood_lum + 30)
+    ys, xs = np.where(bright)
+    if len(xs):
+        gbbox = (int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1)
+    else:
+        gbbox = (int(0.15 * w), int(0.15 * h), int(0.85 * w), int(0.85 * h))
+
+    # Strip band: tighter central box (68%) + full deviation (glyph body AND its
+    # dark keyline), then eroded 2px so grooves/nails at the edge are untouched.
+    strip_box = (np.abs(xx - w / 2) < 0.34 * w) & (np.abs(yy - h / 2) < 0.34 * h)
+    glyph = body & strip_box & (np.abs(lum - wood_lum) > 30)
+    glyph = _erode(glyph, iters=2)
+
     out = arr.copy()
     out[..., :3][glyph] = wood_col
-    return Image.fromarray(np.clip(out, 0, 255).astype(np.uint8), mode="RGBA")
+    board_img = Image.fromarray(np.clip(out, 0, 255).astype(np.uint8), mode="RGBA")
+
+    _BACKING_CACHE[board] = (board_img, gbbox)
+    return board_img, gbbox
 
 
-def bake_onto_plaque(glyph_rgba: Image.Image, backing: Image.Image) -> Image.Image:
-    """Composite a chalk glyph, centred and scaled, onto the wood plaque."""
+def bake_onto_plaque(glyph_rgba: Image.Image, backing: Image.Image,
+                     glyph_box: tuple[int, int, int, int]) -> Image.Image:
+    """Composite a chalk glyph onto the wood plaque, scaled to fill the framing
+    the stock glyph used (``glyph_box`` = the stripped stock glyph's bbox) and
+    centred on that box.
+    """
     board = backing.copy()
-    bw, bh = board.size
-    target = int(round(min(bw, bh) * PLAQUE_GLYPH_FRACTION))
+    gx0, gy0, gx1, gy1 = glyph_box
+    box_w, box_h = gx1 - gx0, gy1 - gy0
+    cx, cy = (gx0 + gx1) / 2.0, (gy0 + gy1) / 2.0
 
-    # Trim the glyph to its own alpha bounds so scaling is about the art, not
-    # the transparent margin, then fit it inside the target square.
-    bbox = glyph_rgba.getbbox()
+    # Trim the glyph to its own alpha bounds so scaling is about the art, not the
+    # transparent margin, then fit it *inside* the stock glyph box (contain).
+    # Bound off the ALPHA channel explicitly: the chalk RGB floor is the tan
+    # colour (never 0,0,0), so a plain getbbox() on RGB would return the whole
+    # canvas on any Pillow where the alpha-only default differs.
+    bbox = glyph_rgba.getchannel("A").getbbox()
     g = glyph_rgba.crop(bbox) if bbox else glyph_rgba
     gw, gh = g.size
-    scale = target / max(gw, gh)
+    scale = min(box_w / gw, box_h / gh)
     g = g.resize((max(1, round(gw * scale)), max(1, round(gh * scale))), Image.LANCZOS)
 
-    ox, oy = (bw - g.width) // 2, (bh - g.height) // 2
+    ox, oy = int(round(cx - g.width / 2)), int(round(cy - g.height / 2))
     board.alpha_composite(g, (ox, oy))
     return board
 
@@ -259,6 +403,13 @@ def nice_label(filename: str) -> str:
     parts = [p for p in parts if p not in drop]
     parts = [p for p in parts if not (p[0] in "Tt" and p[1:].isdigit())]
     parts = [p for p in parts if not p.isdigit()]
+    # Drop empty / single-letter residue (e.g. a lone tier "T" whose digits were
+    # split off), which otherwise leaves a dangling letter in the label.
+    kept = [p for p in parts if len(p) > 1]
+    if kept:
+        return " ".join(kept)
+    # Fall back to the pre-length-filter tokens (keeps the drop-word/tier
+    # cleanup) before giving up on the raw stem.
     return " ".join(parts) if parts else stem
 
 
@@ -295,15 +446,21 @@ def process_dir(in_dir: Path, out_dir: Path, plaque: str, montage: Path | None):
         print(f"No PNGs found in {in_dir}", file=sys.stderr)
         return
     out_dir.mkdir(parents=True, exist_ok=True)
-    backing = _load_plaque_backing() if plaque == "baked" else None
     cells = []
     for p in srcs:
-        glyph = chalk_restyle(Image.open(p))
-        result = bake_onto_plaque(glyph, backing) if backing is not None else glyph
+        with Image.open(p) as src:
+            glyph = chalk_restyle(src)
+        if plaque == "baked":
+            board = board_for_icon(p.name)
+            backing, glyph_box = _load_plaque_backing(board)
+            result = bake_onto_plaque(glyph, backing, glyph_box)
+            print(f"  {p.name} -> {out_dir / p.name}  [board={board}]")
+        else:
+            result = glyph
+            print(f"  {p.name} -> {out_dir / p.name}")
         out_path = out_dir / p.name
         result.save(out_path)
         cells.append((nice_label(p.name), result))
-        print(f"  {p.name} -> {out_path}")
     if montage:
         build_montage(cells, montage)
         print(f"Montage written: {montage}")
