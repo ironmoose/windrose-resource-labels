@@ -93,6 +93,24 @@ DESPECKLE_PASSES = 2
 # Alpha below this is treated as "outside the item" for levelling stats.
 ALPHA_SOLID = 40
 
+# Glyph "pop" - applied ONLY in the baked-plaque composite path (never to the
+# standalone chalk_restyle output or the `--plaque none` glyph). The plain chalk
+# glyph reads too soft against the wood plank (pale tan-on-tan); the stock
+# T_PlaqueT02_* engravings are crisp bright-white relief with deep dark carved
+# lines. This lifts the white point (highlights toward pure white) and expands
+# contrast around mid-grey (deepening the dark keylines) so the relief pops off
+# the wood, tuned to fix the muddy icons without crushing rope-strand / grain
+# detail. Retune here.
+GLYPH_POP_WHITEPOINT = 205.0   # input level that maps to pure white (lower = brighter)
+GLYPH_POP_CONTRAST = 1.5       # contrast gain around mid-grey (>1 deepens shadows,
+                               # brightens highlights)
+GLYPH_POP_HILIGHT_WHITEN = 0.5  # 0..1: how far to pull the *highlights* toward pure
+                               # white. Per-channel contrast alone just makes the
+                               # warm tan more saturated (goes gold, not white); this
+                               # desaturates the bright relief toward white while
+                               # leaving the dark carved keylines their warm tone,
+                               # matching the stock bright-white-on-wood engraving.
+
 # Baked-plaque layout.
 #
 # Board sourcing (empirically decided). We stripped the baked glyph from every
@@ -344,12 +362,44 @@ def _load_plaque_backing(board: str = DEFAULT_BOARD):
     return board_img, gbbox
 
 
+def _glyph_pop(glyph_rgba: Image.Image,
+               whitepoint: float = GLYPH_POP_WHITEPOINT,
+               contrast: float = GLYPH_POP_CONTRAST,
+               hilight_whiten: float = GLYPH_POP_HILIGHT_WHITEN) -> Image.Image:
+    """Boost a chalk glyph so it reads as bright-white relief on the wood board.
+
+    Three moves, all in the baked composite path only:
+      1. Lift the white point (``whitepoint`` -> 255) so highlights brighten.
+      2. Expand contrast around mid-grey (``contrast`` > 1) to deepen the dark
+         carved keylines and brighten the raised faces.
+      3. Whiten the highlights (``hilight_whiten``): pull the brightest pixels
+         toward pure white so the relief reads white, not saturated gold, while
+         the dark keylines keep their warm tone.
+
+    Alpha is untouched, and the tonal remap is monotonic, so relative fine
+    detail (rope strands, wood grain) is preserved - just with more separation.
+    """
+    arr = np.asarray(glyph_rgba.convert("RGBA"), dtype=np.float32)
+    rgb, alpha = arr[..., :3], arr[..., 3:]
+    x = rgb * (255.0 / whitepoint)
+    x = (x - 128.0) * contrast + 128.0
+    x = np.clip(x, 0.0, 255.0)
+    if hilight_whiten > 0.0:
+        lum = (x @ LUMA)[..., None]
+        # 0 through the shadows/mids, ramping to 1 at the brightest highlights.
+        w = np.clip((lum - 128.0) / (255.0 - 128.0), 0.0, 1.0) * hilight_whiten
+        x = np.clip(x * (1.0 - w) + 255.0 * w, 0.0, 255.0)
+    out = np.concatenate([x, alpha], axis=-1)
+    return Image.fromarray(out.astype(np.uint8), mode="RGBA")
+
+
 def bake_onto_plaque(glyph_rgba: Image.Image, backing: Image.Image,
                      glyph_box: tuple[int, int, int, int]) -> Image.Image:
     """Composite a chalk glyph onto the wood plaque, scaled to fill the framing
     the stock glyph used (``glyph_box`` = the stripped stock glyph's bbox) and
-    centred on that box.
+    centred on that box. The glyph is popped (bright-white relief) first.
     """
+    glyph_rgba = _glyph_pop(glyph_rgba)
     board = backing.copy()
     gx0, gy0, gx1, gy1 = glyph_box
     box_w, box_h = gx1 - gx0, gy1 - gy0

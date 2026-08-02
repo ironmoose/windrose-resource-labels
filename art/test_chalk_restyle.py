@@ -117,6 +117,44 @@ def test_board_for_icon_routes_each_category():
 
 
 # --------------------------------------------------------------------------
+# BAKE glyph-pop - boost raises white point + contrast (baked path only)
+# --------------------------------------------------------------------------
+
+def _tan_gradient_glyph():
+    """A tan->cream horizontal gradient (the chalk range) with a solid alpha
+    disc, so max-luminance / contrast can be measured before vs after the pop."""
+    from PIL import Image as _I
+    w = h = 32
+    t = np.linspace(0.0, 1.0, w, dtype=np.float32)[None, :]
+    floor = np.array(cr.CHALK_RAMP[0][1], dtype=np.float32)
+    top = np.array(cr.CHALK_RAMP[-1][1], dtype=np.float32)
+    rgb = (floor[None, None, :] * (1 - t[..., None]) + top[None, None, :] * t[..., None])
+    rgb = np.broadcast_to(rgb, (h, w, 3)).astype(np.uint8)
+    alpha = np.full((h, w, 1), 255, dtype=np.uint8)
+    return _I.fromarray(np.concatenate([rgb, alpha], -1), "RGBA")
+
+
+def _max_luma_and_std(img):
+    a = np.asarray(img.convert("RGBA"), dtype=np.float32)
+    vis = a[..., 3] >= cr.ALPHA_SOLID
+    lum = (a[..., :3] @ cr.LUMA)[vis]
+    return lum.max(), lum.std()
+
+
+def test_glyph_pop_raises_whitepoint_and_contrast():
+    g = _tan_gradient_glyph()
+    before_max, before_std = _max_luma_and_std(g)
+    after_max, after_std = _max_luma_and_std(cr._glyph_pop(g))
+    # highlights pushed toward pure white...
+    assert after_max > before_max
+    assert after_max >= 250
+    # ...and the tonal range (contrast) widened.
+    assert after_std > before_std * 1.15
+    # alpha is untouched.
+    assert (np.asarray(cr._glyph_pop(g))[..., 3] == np.asarray(g)[..., 3]).all()
+
+
+# --------------------------------------------------------------------------
 # TASK 2/3 - glyph-strip erosion helper
 # --------------------------------------------------------------------------
 
