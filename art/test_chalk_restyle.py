@@ -194,6 +194,51 @@ def test_white_preset_desaturates_but_stays_bright():
 
 
 # --------------------------------------------------------------------------
+# BAKE containment - the composited glyph must sit inside the plaque's inner
+# panel with a wood margin, never crossing onto the raised frame.
+# --------------------------------------------------------------------------
+
+def _solid_glyph(size=200, color=(150, 110, 74)):
+    """A uniform fully-opaque RGBA square - a stand-in glyph whose placed rect
+    can be read back off the composite (it differs from the wood everywhere)."""
+    from PIL import Image as _I
+    rgb = np.full((size, size, 3), color, dtype=np.uint8)
+    a = np.full((size, size, 1), 255, dtype=np.uint8)
+    return _I.fromarray(np.concatenate([rgb, a], -1), "RGBA")
+
+
+def test_baked_glyph_stays_inside_inner_panel():
+    board_img, gbbox = cr._load_plaque_backing("Ore")
+    barr = np.asarray(board_img)
+
+    # Board's own alpha bbox (the whole plaque incl. the raised frame).
+    ys, xs = np.where(barr[..., 3] >= cr.ALPHA_SOLID)
+    bb = (int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1)
+
+    # The inner target rect must be inset from the board on ALL sides (there must
+    # be a real wood margin, i.e. the glyph box does not reach the frame).
+    assert gbbox[0] > bb[0] and gbbox[1] > bb[1]
+    assert gbbox[2] < bb[2] and gbbox[3] < bb[3]
+    bw, bh = bb[2] - bb[0], bb[3] - bb[1]
+    assert (gbbox[0] - bb[0]) >= 0.12 * bw and (bb[2] - gbbox[2]) >= 0.12 * bw
+    assert (gbbox[1] - bb[1]) >= 0.12 * bh and (bb[3] - gbbox[3]) >= 0.12 * bh
+
+    # Bake an oversized solid glyph: it must be contained within the inner rect,
+    # so no opaque glyph pixel lands on the wood frame.
+    comp = cr.bake_onto_plaque(_solid_glyph(), board_img, gbbox,
+                               saturation=cr.GLYPH_SATURATION_WHITE)
+    carr = np.asarray(comp)
+    changed = np.any(carr[..., :3].astype(int) != barr[..., :3].astype(int), axis=-1)
+    ys, xs = np.where(changed)
+    placed = (int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1)
+    tol = 1  # LANCZOS edge halo
+    assert placed[0] >= gbbox[0] - tol, f"glyph left {placed[0]} < inner {gbbox[0]}"
+    assert placed[1] >= gbbox[1] - tol, f"glyph top {placed[1]} < inner {gbbox[1]}"
+    assert placed[2] <= gbbox[2] + tol, f"glyph right {placed[2]} > inner {gbbox[2]}"
+    assert placed[3] <= gbbox[3] + tol, f"glyph bottom {placed[3]} > inner {gbbox[3]}"
+
+
+# --------------------------------------------------------------------------
 # TASK 2/3 - glyph-strip erosion helper
 # --------------------------------------------------------------------------
 

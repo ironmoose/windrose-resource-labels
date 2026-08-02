@@ -140,6 +140,24 @@ GLYPH_STYLE_SATURATION = {
 }
 DEFAULT_GLYPH_STYLE = "white"
 
+# Glyph containment inside the plaque (baked composite only).
+#
+# The stock plaque is a raised wood frame around a flat central panel; the stock
+# T_PlaqueT02_* engraving sits well inside that panel with a wood margin on every
+# side, never touching the bevel. An earlier build sized the new glyph to a bbox
+# measured from the stock *bright* pixels, but the raised frame's bevel highlights
+# are themselves bright, so that bbox inflated to nearly the whole board and the
+# glyphs spilled onto / past the frame.
+#
+# Instead we contain-fit each glyph into a centred inner rectangle derived by
+# insetting the board's own (reliable) alpha bounding box by GLYPH_INSET on every
+# side. GLYPH_INSET is the fraction of the board width/height reserved as wood
+# margin per side: 0.19 clears the raised frame and leaves a visible wood border
+# all around, matching where the stock glyph sits. Raise it to shrink the glyph
+# (more margin), lower it to grow the glyph (less margin). The glyph keeps its
+# aspect ratio (contain-fit), so the tighter axis is the one that touches the rect.
+GLYPH_INSET = 0.19
+
 # Baked-plaque layout.
 #
 # Board sourcing (empirically decided). We stripped the baked glyph from every
@@ -367,15 +385,23 @@ def _load_plaque_backing(board: str = DEFAULT_BOARD):
     h, w = lum.shape
     yy, xx = np.mgrid[0:h, 0:w]
 
-    # Measure the stock glyph from the bright chalk (well above wood) so the
-    # bbox is not thrown off by dark grain. Restrict to a generous central box.
-    meas_box = (np.abs(xx - w / 2) < 0.42 * w) & (np.abs(yy - h / 2) < 0.42 * h)
-    bright = body & meas_box & (lum > wood_lum + 30)
-    ys, xs = np.where(bright)
+    # Glyph target box = the board's own alpha bounding box, inset by GLYPH_INSET
+    # on every side. The board bbox is reliable (unlike a bright-pixel measurement,
+    # which the raised frame's bevel highlights inflate to the whole board); the
+    # inset reserves a wood margin so the contain-fit glyph stays inside the flat
+    # panel and never crosses the raised frame.
+    ys, xs = np.where(body)
     if len(xs):
-        gbbox = (int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1)
+        bx0, by0, bx1, by1 = int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1
     else:
-        gbbox = (int(0.15 * w), int(0.15 * h), int(0.85 * w), int(0.85 * h))
+        bx0, by0, bx1, by1 = 0, 0, w, h
+    bw, bh = bx1 - bx0, by1 - by0
+    gbbox = (
+        int(round(bx0 + GLYPH_INSET * bw)),
+        int(round(by0 + GLYPH_INSET * bh)),
+        int(round(bx1 - GLYPH_INSET * bw)),
+        int(round(by1 - GLYPH_INSET * bh)),
+    )
 
     # Strip band: tighter central box (68%) + full deviation (glyph body AND its
     # dark keyline), then eroded 2px so grooves/nails at the edge are untouched.
