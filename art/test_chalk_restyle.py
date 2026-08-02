@@ -141,6 +141,15 @@ def _max_luma_and_std(img):
     return lum.max(), lum.std()
 
 
+def _mean_chroma(img):
+    """Mean chroma (max-min channel spread) over the visible pixels - 0 for a
+    fully neutral grey/white glyph, higher for a saturated warm/gold one."""
+    a = np.asarray(img.convert("RGBA"), dtype=np.float32)
+    vis = a[..., 3] >= cr.ALPHA_SOLID
+    rgb = a[..., :3][vis]
+    return float((rgb.max(-1) - rgb.min(-1)).mean())
+
+
 def test_glyph_pop_raises_whitepoint_and_contrast():
     g = _tan_gradient_glyph()
     before_max, before_std = _max_luma_and_std(g)
@@ -152,6 +161,36 @@ def test_glyph_pop_raises_whitepoint_and_contrast():
     assert after_std > before_std * 1.15
     # alpha is untouched.
     assert (np.asarray(cr._glyph_pop(g))[..., 3] == np.asarray(g)[..., 3]).all()
+
+
+def test_gold_preset_is_byte_for_byte_the_legacy_pop():
+    """The 'gold' preset (saturation=1.0) must skip desaturation entirely, so its
+    output is identical to the default/legacy pop - the gold look cannot drift."""
+    g = _tan_gradient_glyph()
+    legacy = np.asarray(cr._glyph_pop(g))
+    gold = np.asarray(cr._glyph_pop(g, saturation=cr.GLYPH_SATURATION_GOLD))
+    assert cr.GLYPH_SATURATION_GOLD == 1.0
+    assert (gold == legacy).all()
+
+
+def test_white_preset_desaturates_but_stays_bright():
+    """The 'white' preset must pull chroma down (gold -> chalk-white) while
+    keeping the pop: max luminance stays high and is NOT darkened vs gold."""
+    g = _tan_gradient_glyph()
+    gold = cr._glyph_pop(g, saturation=cr.GLYPH_SATURATION_GOLD)
+    white = cr._glyph_pop(g, saturation=cr.GLYPH_SATURATION_WHITE)
+
+    # Chroma drops substantially: the warm gold cast is pulled toward neutral.
+    assert _mean_chroma(white) < _mean_chroma(gold) * 0.5
+
+    gold_max, _ = _max_luma_and_std(gold)
+    white_max, _ = _max_luma_and_std(white)
+    # Still bright relief...
+    assert white_max >= 250
+    # ...and the desaturation is chroma-only, so brightness is not lost.
+    assert white_max >= gold_max - 1
+    # alpha untouched.
+    assert (np.asarray(white)[..., 3] == np.asarray(g)[..., 3]).all()
 
 
 # --------------------------------------------------------------------------

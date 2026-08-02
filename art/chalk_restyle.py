@@ -111,6 +111,35 @@ GLYPH_POP_HILIGHT_WHITEN = 0.5  # 0..1: how far to pull the *highlights* toward 
                                # leaving the dark carved keylines their warm tone,
                                # matching the stock bright-white-on-wood engraving.
 
+# Glyph chroma control for the baked composite (the "gold" vs "white" presets).
+#
+# The pop above lifts the relief but leaves the whole glyph warm GOLD/amber: the
+# highlight-whiten only touches the brightest pixels, so the mids/keylines stay
+# brassy. This constant collapses the popped glyph's chroma toward its own
+# luminance to pull that warm tone to chalk-white. It is a HUE/CHROMA move ONLY:
+# each channel is lerped toward the pixel's Rec.601 luminance, and because the
+# LUMA weights sum to 1 the result's luminance is mathematically identical to the
+# input's - so all the pop/contrast/brightness we just gained is preserved; only
+# saturation drops (bright relief stays bright, it just goes white).
+#
+# Convention:
+#   1.0 = keep full chroma  -> the warm GOLD look (unchanged from before).
+#   0.0 = fully neutral      -> pure grey/white relief with neutral dark keylines.
+# The "gold" preset uses 1.0 and, because that skips the desaturation entirely,
+# its rendered output is byte-for-byte identical to the pre-desaturation build.
+# The "white" preset uses GLYPH_SATURATION_WHITE: a whisper of residual warmth so
+# the dark keylines read "near-grey" (warm chalk on wood) rather than clinical
+# digital grey, matching the stock T_PlaqueT02 chalk-white engraving.
+GLYPH_SATURATION_GOLD = 1.0
+GLYPH_SATURATION_WHITE = 0.15
+
+# glyph-style preset name -> chroma-keep factor fed to _glyph_pop.
+GLYPH_STYLE_SATURATION = {
+    "gold": GLYPH_SATURATION_GOLD,
+    "white": GLYPH_SATURATION_WHITE,
+}
+DEFAULT_GLYPH_STYLE = "white"
+
 # Baked-plaque layout.
 #
 # Board sourcing (empirically decided). We stripped the baked glyph from every
@@ -365,16 +394,25 @@ def _load_plaque_backing(board: str = DEFAULT_BOARD):
 def _glyph_pop(glyph_rgba: Image.Image,
                whitepoint: float = GLYPH_POP_WHITEPOINT,
                contrast: float = GLYPH_POP_CONTRAST,
-               hilight_whiten: float = GLYPH_POP_HILIGHT_WHITEN) -> Image.Image:
+               hilight_whiten: float = GLYPH_POP_HILIGHT_WHITEN,
+               saturation: float = GLYPH_SATURATION_GOLD) -> Image.Image:
     """Boost a chalk glyph so it reads as bright-white relief on the wood board.
 
-    Three moves, all in the baked composite path only:
+    Four moves, all in the baked composite path only:
       1. Lift the white point (``whitepoint`` -> 255) so highlights brighten.
       2. Expand contrast around mid-grey (``contrast`` > 1) to deepen the dark
          carved keylines and brighten the raised faces.
       3. Whiten the highlights (``hilight_whiten``): pull the brightest pixels
          toward pure white so the relief reads white, not saturated gold, while
          the dark keylines keep their warm tone.
+      4. Collapse chroma toward luminance (``saturation``): lerp every channel
+         toward the pixel's own Rec.601 luminance. This pulls the still-warm
+         mids/keylines from GOLD toward chalk-white. ``saturation`` = 1.0 keeps
+         full chroma (the gold look) and is skipped entirely, so that path is
+         byte-for-byte identical to the pre-desaturation build; 0.0 is fully
+         neutral grey/white. Because the LUMA weights sum to 1, this lerp leaves
+         each pixel's luminance unchanged - it desaturates without darkening, so
+         the pop/contrast from moves 1-3 survive intact.
 
     Alpha is untouched, and the tonal remap is monotonic, so relative fine
     detail (rope strands, wood grain) is preserved - just with more separation.
@@ -389,17 +427,23 @@ def _glyph_pop(glyph_rgba: Image.Image,
         # 0 through the shadows/mids, ramping to 1 at the brightest highlights.
         w = np.clip((lum - 128.0) / (255.0 - 128.0), 0.0, 1.0) * hilight_whiten
         x = np.clip(x * (1.0 - w) + 255.0 * w, 0.0, 255.0)
+    if saturation < 1.0:
+        # Chroma-only pull toward each pixel's luminance (preserves brightness).
+        lum = (x @ LUMA)[..., None]
+        x = np.clip(lum + saturation * (x - lum), 0.0, 255.0)
     out = np.concatenate([x, alpha], axis=-1)
     return Image.fromarray(out.astype(np.uint8), mode="RGBA")
 
 
 def bake_onto_plaque(glyph_rgba: Image.Image, backing: Image.Image,
-                     glyph_box: tuple[int, int, int, int]) -> Image.Image:
+                     glyph_box: tuple[int, int, int, int],
+                     saturation: float = GLYPH_SATURATION_GOLD) -> Image.Image:
     """Composite a chalk glyph onto the wood plaque, scaled to fill the framing
     the stock glyph used (``glyph_box`` = the stripped stock glyph's bbox) and
-    centred on that box. The glyph is popped (bright-white relief) first.
+    centred on that box. The glyph is popped (bright-white relief) first, then
+    its chroma is collapsed per ``saturation`` (1.0 = gold, lower = whiter).
     """
-    glyph_rgba = _glyph_pop(glyph_rgba)
+    glyph_rgba = _glyph_pop(glyph_rgba, saturation=saturation)
     board = backing.copy()
     gx0, gy0, gx1, gy1 = glyph_box
     box_w, box_h = gx1 - gx0, gy1 - gy0
@@ -490,11 +534,13 @@ def build_montage(cells, out_path: Path, cols: int = 6, cell: int = 200,
 # CLI
 # --------------------------------------------------------------------------
 
-def process_dir(in_dir: Path, out_dir: Path, plaque: str, montage: Path | None):
+def process_dir(in_dir: Path, out_dir: Path, plaque: str, montage: Path | None,
+                glyph_style: str = DEFAULT_GLYPH_STYLE):
     srcs = sorted(in_dir.glob("*.png"))
     if not srcs:
         print(f"No PNGs found in {in_dir}", file=sys.stderr)
         return
+    saturation = GLYPH_STYLE_SATURATION[glyph_style]
     out_dir.mkdir(parents=True, exist_ok=True)
     cells = []
     for p in srcs:
@@ -503,8 +549,8 @@ def process_dir(in_dir: Path, out_dir: Path, plaque: str, montage: Path | None):
         if plaque == "baked":
             board = board_for_icon(p.name)
             backing, glyph_box = _load_plaque_backing(board)
-            result = bake_onto_plaque(glyph, backing, glyph_box)
-            print(f"  {p.name} -> {out_dir / p.name}  [board={board}]")
+            result = bake_onto_plaque(glyph, backing, glyph_box, saturation=saturation)
+            print(f"  {p.name} -> {out_dir / p.name}  [board={board}, style={glyph_style}]")
         else:
             result = glyph
             print(f"  {p.name} -> {out_dir / p.name}")
@@ -524,10 +570,15 @@ def main(argv=None):
                     help="output dir for chalk icons")
     ap.add_argument("--plaque", choices=("baked", "none"), default="none",
                     help="'none' = glyph on transparent; 'baked' = glyph on the wood plaque")
+    ap.add_argument("--glyph-style", choices=tuple(GLYPH_STYLE_SATURATION),
+                    default=DEFAULT_GLYPH_STYLE,
+                    help="baked-glyph tone: 'gold' = warm relief (unchanged legacy "
+                         "boost); 'white' = desaturated chalk-white relief. Only "
+                         "affects the '--plaque baked' path.")
     ap.add_argument("--montage", type=Path, default=None,
                     help="optional path to write a labelled contact sheet")
     args = ap.parse_args(argv)
-    process_dir(args.in_dir, args.out_dir, args.plaque, args.montage)
+    process_dir(args.in_dir, args.out_dir, args.plaque, args.montage, args.glyph_style)
 
 
 if __name__ == "__main__":
