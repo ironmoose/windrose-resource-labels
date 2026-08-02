@@ -255,3 +255,58 @@ def test_erode_shrinks_block_and_kills_specks():
     thin = np.zeros((5, 5), dtype=bool)
     thin[2, :] = True
     assert not cr._erode(thin, iters=1).any()
+
+
+# --------------------------------------------------------------------------
+# DEFECT B - soft drop-shadow cutoff (baked path): faint low-alpha source
+# pixels drop to fully transparent; the solid object is untouched.
+# --------------------------------------------------------------------------
+
+def test_shadow_cutoff_zeros_faint_alpha_keeps_object():
+    from PIL import Image as _I
+    cut = cr.GLYPH_SHADOW_CUTOFF
+    arr = np.zeros((16, 16, 4), dtype=np.uint8)
+    arr[..., :3] = 120                       # chalk-grey everywhere
+    arr[4:12, 4:12, 3] = 255                 # solid object core
+    arr[0:4, 0:4, 3] = max(0, cut - 30)      # faint shadow patch (below cutoff)
+    arr[12:16, 12:16, 3] = min(255, cut + 30)  # firmer edge (above cutoff)
+    out = np.asarray(cr._cut_soft_shadow(_I.fromarray(arr, "RGBA")))
+    # faint shadow removed entirely...
+    assert (out[0:4, 0:4, 3] == 0).all()
+    # ...solid object kept...
+    assert (out[4:12, 4:12, 3] == 255).all()
+    # ...and alpha above the cutoff survives (legit edge, not erased).
+    assert (out[12:16, 12:16, 3] == min(255, cut + 30)).all()
+
+
+# --------------------------------------------------------------------------
+# DEFECT A - clean board: the stock plaque's own baked glyph must be gone,
+# no bright remnant ghosts through inside the flat panel.
+# --------------------------------------------------------------------------
+
+def test_clean_board_has_no_stock_glyph_ghost():
+    from PIL import Image as _I
+    board = "Ore"
+    backing, _gbox = cr._load_plaque_backing(board)
+    barr = np.asarray(backing, dtype=np.float32)
+    body = barr[..., 3] >= cr.ALPHA_SOLID
+    lum = barr[..., :3] @ cr.LUMA
+    wood_lum = float(np.median(lum[body]))
+
+    ys, xs = np.where(body)
+    bb = (int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1)
+    bw, bh = bb[2] - bb[0], bb[3] - bb[1]
+    px0 = int(round(bb[0] + cr.PLAQUE_PANEL_INSET * bw))
+    px1 = int(round(bb[2] - cr.PLAQUE_PANEL_INSET * bw))
+    py0 = int(round(bb[1] + cr.PLAQUE_PANEL_INSET * bh))
+    py1 = int(round(bb[3] - cr.PLAQUE_PANEL_INSET * bh))
+
+    # Sanity: the STOCK plaque really does carry a bright glyph in this panel...
+    stock = np.asarray(_I.open(cr._plaque_path(board)).convert("RGBA"), dtype=np.float32)
+    slum = stock[..., :3] @ cr.LUMA
+    stock_bright = (slum[py0:py1, px0:px1] > wood_lum + 30)
+    assert stock_bright.sum() > 500, "test premise wrong: stock panel has no glyph"
+
+    # ...and our cleaned board has zero bright stock-glyph pixels left (no ghost).
+    clean_bright = (lum[py0:py1, px0:px1] > wood_lum + 30)
+    assert clean_bright.sum() == 0, f"{int(clean_bright.sum())} ghost px survived"

@@ -158,6 +158,44 @@ DEFAULT_GLYPH_STYLE = "white"
 # aspect ratio (contain-fit), so the tighter axis is the one that touches the rect.
 GLYPH_INSET = 0.19
 
+# Clean-board reconstruction (baked composite only).
+#
+# The stock plaque ships with its OWN chalk glyph baked into the wood. If that
+# glyph is not fully removed it ghosts behind our new glyph. An earlier build
+# only recoloured a central strip to the wood tone, which left ~60% of the stock
+# glyph surviving (it reaches almost to the frame) AND could not be widened
+# without eating plank grooves / nails.
+#
+# Instead we INPAINT the stock glyph out of the flat inner panel and reuse the
+# resulting blank board (cached per board name, built once). The panel is the
+# board's alpha bbox inset by PLAQUE_PANEL_INSET on every side, which stays
+# inside the raised frame so nails/grooves/bevel are never touched. Inside the
+# panel, any pixel whose luminance deviates from the wood tone by more than
+# PLAQUE_GLYPH_THRESHOLD is treated as stock glyph (bright body, dark keyline, or
+# soft shadow), the mask is dilated PLAQUE_GLYPH_DILATE px to catch anti-aliased
+# fringes, and each masked pixel is refilled by horizontal interpolation from the
+# clean wood on either side in the same row. The plank grain runs horizontally,
+# so a same-row fill reproduces the grain tone and keeps the horizontal plank
+# seams intact (they sit at a fixed y, so the clean edge pixels are on the seam
+# too). Verified to leave zero glyph remnant on every board.
+PLAQUE_PANEL_INSET = 0.12
+PLAQUE_GLYPH_THRESHOLD = 24.0
+PLAQUE_GLYPH_DILATE = 2
+
+# Shadow cutoff (baked composite only).
+#
+# The source item icons carry their own soft drop-shadow: a thin band of
+# partial-alpha pixels offset from the object. Chalk-restyled and composited onto
+# the wood at partial alpha, that shadow reads as a faint grey cloud/smudge next
+# to the glyph. Any glyph pixel whose alpha is below GLYPH_SHADOW_CUTOFF (0..255)
+# is forced fully transparent, so the soft shadow drops out cleanly. The object
+# itself is fully opaque (alpha ~255) and its internal detail (rope strands, wood
+# grain, dark keylines) is carried by COLOUR inside that opaque silhouette, not by
+# alpha, so this only trims the detached shadow and the faintest edge fringe - the
+# object and its fine detail are untouched. Applied before the alpha-bbox trim so
+# the removed shadow also stops skewing the glyph's centring.
+GLYPH_SHADOW_CUTOFF = 90
+
 # Baked-plaque layout.
 #
 # Board sourcing (empirically decided). We stripped the baked glyph from every
@@ -350,23 +388,76 @@ def _erode(mask: np.ndarray, iters: int = 1) -> np.ndarray:
     return m
 
 
-# board name -> (clean RGBA board, stock-glyph bbox (x0, y0, x1, y1)). Cached
-# so each board is stripped/measured once per run.
+def _dilate(mask: np.ndarray, iters: int = 1) -> np.ndarray:
+    """Binary-dilate a 2D bool mask by ``iters`` px (4-connectivity), numpy-only."""
+    m = mask
+    for _ in range(max(0, iters)):
+        p = np.pad(m, 1, mode="constant", constant_values=False)
+        m = (m
+             | p[0:-2, 1:-1] | p[2:, 1:-1]      # up / down
+             | p[1:-1, 0:-2] | p[1:-1, 2:])     # left / right
+    return m
+
+
+def _inpaint_panel_wood(rgb: np.ndarray, wood_lum: float, wood_col: np.ndarray,
+                        board_bbox: tuple[int, int, int, int]) -> np.ndarray:
+    """Return a copy of ``rgb`` with the stock glyph inpainted out of the flat
+    inner panel, leaving frame / nails / grooves / grain untouched.
+
+    The panel is ``board_bbox`` inset by PLAQUE_PANEL_INSET (stays inside the
+    raised frame). Any panel pixel deviating from the wood tone by more than
+    PLAQUE_GLYPH_THRESHOLD is stock glyph; the mask is dilated to catch soft
+    fringes, then each masked pixel is refilled by horizontal interpolation from
+    the clean wood on either side of it in the SAME row. The plank grain runs
+    horizontally, so a same-row fill reproduces the local tone and preserves the
+    horizontal plank seams.
+    """
+    lum = rgb @ LUMA
+    bx0, by0, bx1, by1 = board_bbox
+    bw, bh = bx1 - bx0, by1 - by0
+    px0 = int(round(bx0 + PLAQUE_PANEL_INSET * bw))
+    px1 = int(round(bx1 - PLAQUE_PANEL_INSET * bw))
+    py0 = int(round(by0 + PLAQUE_PANEL_INSET * bh))
+    py1 = int(round(by1 - PLAQUE_PANEL_INSET * bh))
+
+    h, w = lum.shape
+    panel = np.zeros((h, w), dtype=bool)
+    panel[py0:py1, px0:px1] = True
+    glyph = panel & (np.abs(lum - wood_lum) > PLAQUE_GLYPH_THRESHOLD)
+    glyph = _dilate(glyph, PLAQUE_GLYPH_DILATE) & panel
+
+    out = rgb.copy()
+    xs_local = np.arange(px1 - px0)
+    for y in range(py0, py1):
+        row_mask = glyph[y, px0:px1]
+        if not row_mask.any():
+            continue
+        clean = ~row_mask
+        if clean.sum() < 2:
+            out[y, px0:px1][row_mask] = wood_col
+            continue
+        for ch in range(3):
+            vals = rgb[y, px0:px1, ch]
+            filled = np.interp(xs_local, xs_local[clean], vals[clean])
+            out[y, px0:px1, ch][row_mask] = filled[row_mask]
+    return out
+
+
+# board name -> (clean RGBA board, glyph target bbox (x0, y0, x1, y1)). Cached
+# so each board is cleaned / measured once per run.
 _BACKING_CACHE: dict[str, tuple[Image.Image, tuple[int, int, int, int]]] = {}
 
 
 def _load_plaque_backing(board: str = DEFAULT_BOARD):
-    """Strip the baked-in chalk glyph from a stock plaque, returning a clean
-    wood board plus the bounding box the stock glyph occupied.
+    """Return a genuinely clean wood board (stock glyph inpainted out) plus the
+    inset target bbox the new glyph is contain-fit into.
 
-    The stock glyph is a bright chalk shape with a dark keyline; both read far
-    from the mid-brown wood tone, so we strip pixels whose luminance deviates
-    strongly from the wood median - but only inside a central box, and the strip
-    mask is eroded a couple of pixels so it does not nibble the plank grooves /
-    nail heads near the box boundary (fixes the earlier ~300px edge bleed).
+    The stock plaque ships its own baked chalk glyph; ``_inpaint_panel_wood``
+    reconstructs plausible wood over it inside the flat inner panel, leaving the
+    raised frame / nails / grooves / grain intact, so nothing ghosts through.
 
-    The returned glyph bbox is measured from the *bright* stock glyph so the new
-    glyph can be sized to the exact framing the stock art used.
+    The returned glyph bbox is the board's alpha bbox inset by GLYPH_INSET (the
+    flat panel with a wood margin), not a measurement of the stock glyph.
     """
     if board in _BACKING_CACHE:
         return _BACKING_CACHE[board]
@@ -383,7 +474,6 @@ def _load_plaque_backing(board: str = DEFAULT_BOARD):
     wood_col = rgb[wood_band].mean(0) if wood_band.any() else np.array([68.0, 48.0, 32.0])
 
     h, w = lum.shape
-    yy, xx = np.mgrid[0:h, 0:w]
 
     # Glyph target box = the board's own alpha bounding box, inset by GLYPH_INSET
     # on every side. The board bbox is reliable (unlike a bright-pixel measurement,
@@ -403,14 +493,10 @@ def _load_plaque_backing(board: str = DEFAULT_BOARD):
         int(round(by1 - GLYPH_INSET * bh)),
     )
 
-    # Strip band: tighter central box (68%) + full deviation (glyph body AND its
-    # dark keyline), then eroded 2px so grooves/nails at the edge are untouched.
-    strip_box = (np.abs(xx - w / 2) < 0.34 * w) & (np.abs(yy - h / 2) < 0.34 * h)
-    glyph = body & strip_box & (np.abs(lum - wood_lum) > 30)
-    glyph = _erode(glyph, iters=2)
-
+    # Inpaint the stock glyph out of the flat panel to get a truly clean board.
+    clean_rgb = _inpaint_panel_wood(rgb, float(wood_lum), wood_col, (bx0, by0, bx1, by1))
     out = arr.copy()
-    out[..., :3][glyph] = wood_col
+    out[..., :3] = clean_rgb
     board_img = Image.fromarray(np.clip(out, 0, 255).astype(np.uint8), mode="RGBA")
 
     _BACKING_CACHE[board] = (board_img, gbbox)
@@ -461,14 +547,31 @@ def _glyph_pop(glyph_rgba: Image.Image,
     return Image.fromarray(out.astype(np.uint8), mode="RGBA")
 
 
+def _cut_soft_shadow(glyph_rgba: Image.Image,
+                     cutoff: int = GLYPH_SHADOW_CUTOFF) -> Image.Image:
+    """Force fully transparent any glyph pixel whose alpha is below ``cutoff``,
+    dropping the source item icon's soft drop-shadow so it does not smudge grey
+    onto the wood. The object body (alpha ~255) and its colour-carried internal
+    detail are untouched.
+    """
+    if cutoff <= 0:
+        return glyph_rgba
+    arr = np.asarray(glyph_rgba.convert("RGBA")).copy()
+    arr[..., 3][arr[..., 3] < cutoff] = 0
+    return Image.fromarray(arr, mode="RGBA")
+
+
 def bake_onto_plaque(glyph_rgba: Image.Image, backing: Image.Image,
                      glyph_box: tuple[int, int, int, int],
-                     saturation: float = GLYPH_SATURATION_GOLD) -> Image.Image:
-    """Composite a chalk glyph onto the wood plaque, scaled to fill the framing
-    the stock glyph used (``glyph_box`` = the stripped stock glyph's bbox) and
-    centred on that box. The glyph is popped (bright-white relief) first, then
-    its chroma is collapsed per ``saturation`` (1.0 = gold, lower = whiter).
+                     saturation: float = GLYPH_SATURATION_GOLD,
+                     shadow_cutoff: int = GLYPH_SHADOW_CUTOFF) -> Image.Image:
+    """Composite a chalk glyph onto the wood plaque, contain-fit into
+    ``glyph_box`` (the inset inner panel) and centred on it. The soft drop-shadow
+    is cut first (``shadow_cutoff``), then the glyph is popped (bright-white
+    relief) and its chroma collapsed per ``saturation`` (1.0 = gold, lower =
+    whiter).
     """
+    glyph_rgba = _cut_soft_shadow(glyph_rgba, shadow_cutoff)
     glyph_rgba = _glyph_pop(glyph_rgba, saturation=saturation)
     board = backing.copy()
     gx0, gy0, gx1, gy1 = glyph_box
@@ -476,7 +579,7 @@ def bake_onto_plaque(glyph_rgba: Image.Image, backing: Image.Image,
     cx, cy = (gx0 + gx1) / 2.0, (gy0 + gy1) / 2.0
 
     # Trim the glyph to its own alpha bounds so scaling is about the art, not the
-    # transparent margin, then fit it *inside* the stock glyph box (contain).
+    # transparent margin, then fit it *inside* the inset panel box (contain).
     # Bound off the ALPHA channel explicitly: the chalk RGB floor is the tan
     # colour (never 0,0,0), so a plain getbbox() on RGB would return the whole
     # canvas on any Pillow where the alpha-only default differs.
