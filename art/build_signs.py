@@ -194,7 +194,7 @@ MANIFEST = [
     ("T_ItemIcon_Craft_T02_LinenThreads_01", "V", "Rigging", "Rigging", "Clothing"),
     ("T_ItemIcon_Craft_T01_AlchemicalBase_01", "V", "Alchemy Ingredients", "AlchemyIngredients", "Alchemy"),
     ("T_ItemIcon_Loot_Food_Meat_T1", "V", "Cooking Ingredients: Meats", "CookingMeats", "FoodIngridients"),
-    ("T_ItemIcon_Resources_T01_Potato_01", "N", "Cooking Ingredients: Vegetables", "CookingVegetables", "FoodIngridients"),
+    ("T_ItemIcon_Raw_Food_Pepper_T1", "N", "Cooking Ingredients: Vegetables", "CookingVegetables", "FoodIngridients"),
     ("T_ItemIcon_Consumables_Second_SeafoodPlatter", "V", "Crafted Food", "CraftedFood", "Food"),
     ("T_ItemIcon_Consumables_T01_HealingElixir_01", "V", "Healing Potions", "HealingPotions", "Alchemy"),
     ("T_ItemIcon_Consumables_T1_Strength_01", "V", "Buff Elixirs", "BuffElixirs", "Alchemy"),
