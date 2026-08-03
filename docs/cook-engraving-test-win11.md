@@ -1,3 +1,9 @@
+> SUPERSEDED 2026-08-03 by docs/cook-engraving-atlas-win11.md.
+> This guide's "Pad to Power of Two" steps were WRONG: padding 1280x384 -> 2048x512
+> corrupted the atlas sampling. The correct cook is NATIVE with Power Of Two Mode = None
+> (the atlas is VT-eligible because its dimensions are multiples of tile size 128, not
+> because they are powers of two). Follow cook-engraving-atlas-win11.md instead.
+
 # Cooking the engraving-atlas Route X pivotal test in UE5.6 on Windows 11
 
 This is a **paint-by-numbers guide** for cooking ONE test texture asset that
