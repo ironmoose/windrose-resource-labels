@@ -290,3 +290,6 @@ engine fork, if one exists, would be more likely to produce output the game
 accepts than a stock Epic-distributed 5.6 editor. Check the game's official
 channels (Steam page, official Discord, developer website) for a modkit
 before spending more time on repeated stock-editor cook attempts.
+
+To scale this proven single-icon recipe to the full set of 52 sign icons,
+see [`cook-52-signs-win11.md`](cook-52-signs-win11.md).

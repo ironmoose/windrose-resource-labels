@@ -1,0 +1,53 @@
+source_stem,source_dir,canon_name,final_token,board
+T_ItemIcon_Raw_Ore_Iron_T2,V,Iron Ore,IronOre,Ore
+T_ItemIcon_Craft_Ingot_Iron_T2,V,Iron Ingot,IronIngot,Ore
+T_ItemIcon_Resources_T01_CopperOre_01,V,Copper Ore,CopperOre,Ore
+T_ItemIcon_Craft_T01_CopperIngot_01,V,Copper Ingot,CopperIngot,Ore
+T_ItemIcon_Loot_T02_GoldNugget_01,V,Gold Nugget,GoldNugget,Ore
+T_ItemIcon_Craft_T03_GoldIngot_01,V,Gold Ingot,GoldIngot,Ore
+T_ItemIcon_Craft_T02_SilverIngot_01,V,Silver Ingot,SilverIngot,Ore
+T_ItemIcon_Craft_T03_TumbagoIngot_01,V,Tumbago Ingot,TumbagoIngot,Ore
+T_ItemIcon_Loot_T02_ToledoSteel_01,V,Toledo Steel,ToledoSteel,Ore
+T_ItemIcon_Craft_Ingot_Iron_T3,V,Ancient Metal Ingot,AncientMetalIngot,Ore
+T_ItemIcon_Craft_T03_EnchantedIngot_01,V,Enchanted Ingot,EnchantedIngot,Ore
+T_ItemIcon_Raw_Resource_Stone_T1,V,Stone,Stone,Ore
+T_ItemIcon_Raw_Resource_Clay_T1,V,Clay,Clay,Ore
+T_ItemIcon_Craft_Resource_Coal_T2,V,Coal,Coal,Ore
+T_ItemIcon_Raw_Resource_Quartz_T04,V,Quartz,Quartz,Ore
+T_ItemIcon_Resources_T03_Obsidian_01,V,Obsidian,Obsidian,Ore
+T_ItemIcon_Raw_Resource_Sulfur_T1,V,Sulfur,Sulfur,Ore
+T_ItemIcon_Craft_T02_Saltpeter_01,V,Saltpeter,Saltpeter,Ore
+T_ItemIcon_Craft_T01_Ash_01,N,Ash,Ash,Ore
+T_ItemIcon_Raw_Resource_Wood_T1,V,Wood,WoodLog,Wood
+T_ItemIcon_Resources_T01_SticksWood_01,V,Sticks,Sticks,Wood
+T_ItemIcon_Craft_T01_PlanksWood_01,V,Planks,Planks,Wood
+T_ItemIcon_Craft_T02_WoodenBeam_01,V,Timber,Timber,Wood
+T_ItemIcon_Resource_T02_Bark_01,V,Bark,Bark,Wood
+T_ItemIcon_Resources_T02_Hardwood_01,V,Hardwood,Hardwood,Wood
+T_ItemIcon_Raw_Resource_Wood_Mahogany_T04,V,Mahogany,Mahogany,Wood
+T_ItemIcon_Resources_T03_Tar_01,V,Resin,Resin,Wood
+T_ItemIcon_Craft_T04_Varnish_01,V,Varnish,Varnish,Wood
+T_ItemIcon_Craft_T03_TarredPlanks_01,V,Tarred Planks,TarredPlanks,Wood
+T_ItemIcon_Resources_T02_FlaxFiber_01,V,Fiber (Flax),FlaxFiber,Clothing
+T_ItemIcon_Craft_Resource_Fabric_T1,V,Fabric,Fabric,Clothing
+T_ItemIcon_Loot_Resource_Leather_T1,V,Leather,Leather,Clothing
+T_ItemIcon_Craft_T02_TanLeather_01,V,Tan Leather,TanLeather,Clothing
+T_ItemIcon_Loot_Resource_Leather_T2,V,Crocodile Leather,CrocodileLeather,Clothing
+T_ItemIcon_Craft_T02_Tannin_01,V,Tannin,Tannin,Clothing
+T_ItemIcon_Craft_T03_TarredFabric_01,V,Tarred Fabric,TarredFabric,Clothing
+T_ItemIcon_Loot_Resource_Feather_T2,V,Feather,Feather,Clothing
+T_ItemIcon_Craft_Resource_Rope_T1,V,Rope,Rope,Clothing
+T_ItemIcon_Craft_T02_LinenThreads_01,V,Rigging,Rigging,Clothing
+T_ItemIcon_Craft_T01_AlchemicalBase_01,V,Alchemy Ingredients,AlchemyIngredients,Alchemy
+T_ItemIcon_Loot_Food_MeatBird_T1+T_ItemIcon_Loot_Food_Meat_T1+T_ItemIcon_Resources_T01_DodoEgg_01,N+V+N,Cooking Ingredients: Meats,CookingMeats,FoodIngridients
+T_ItemIcon_Raw_Food_Pepper_T1+T_ItemIcon_Raw_Food_Banana_T3+T_ItemIcon_Raw_Food_Coconut_T1,N+N+N,Cooking Ingredients: Plants,CookingPlants,FoodIngridients
+T_ItemIcon_Consumables_Second_SeafoodPlatter,V,Crafted Food,CraftedFood,Food
+T_ItemIcon_Consumables_T01_HealingElixir_01,V,Healing Potions,HealingPotions,Alchemy
+T_ItemIcon_Consumables_T1_Strength_01,V,Buff Elixirs,BuffElixirs,Alchemy
+T_ItemIcon_Ship_Gun_24_Pounder,N,Ship Parts,ShipParts,Ship
+T_ItemIcon_Loot_TradeGoods_Provisions,V,Trade Items,TradeItems,Trade
+T_ItemIcon_Loot_T01_BoarHead_01,V,Animal Heads,AnimalHeads,Alchemy
+T_ItemIcon_Loot_T03_CoinDoubloon_01,V,Coins,Coins,Treasure
+T_ItemIcon_WeaponRange_Pistol_Blank,N,Ranged Weapons,RangedWeapons,Weapons
+T_ItemIcon_WeaponMelee_Saber_Blank,N,Melee Weapons,MeleeWeapons,Weapons
+T_ItemIcon_Craft_Ammo_Iron_T2,N,Ammo,Ammo,Weapons
