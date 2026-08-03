@@ -284,6 +284,48 @@ def test_shadow_cutoff_zeros_faint_alpha_keeps_object():
 # no bright remnant ghosts through inside the flat panel.
 # --------------------------------------------------------------------------
 
+# --------------------------------------------------------------------------
+# COMPOSITE - compose_cluster places multiple item glyphs onto one canvas in
+# the back-left / back-right / front-center cluster layout (multi-item signs
+# like the Cooking Ingredients boards).
+# --------------------------------------------------------------------------
+
+def _solid_square(size=40, color=(200, 50, 50)):
+    """A small, fully-opaque, solid-colour RGBA square on transparent canvas -
+    a stand-in raw item icon distinct enough per colour to be told apart."""
+    from PIL import Image as _I
+    rgb = np.full((size, size, 3), color, dtype=np.uint8)
+    a = np.full((size, size, 1), 255, dtype=np.uint8)
+    return _I.fromarray(np.concatenate([rgb, a], -1), "RGBA")
+
+
+def test_compose_cluster_places_all_three_items_and_fills_canvas():
+    canvas = (760, 560)
+    w, h = canvas
+    sources = [
+        _solid_square(color=(200, 50, 50)),    # back-left
+        _solid_square(color=(50, 200, 50)),    # back-right
+        _solid_square(color=(50, 50, 200)),    # front-center
+    ]
+    result = cr.compose_cluster(sources, canvas=canvas)
+
+    assert result.mode == "RGBA"
+    assert result.size == canvas
+
+    arr = np.asarray(result)
+    # Slot centres for the 3-item layout (back-left, back-right, front-center).
+    slot_centers = [(0.30, 0.42), (0.70, 0.42), (0.50, 0.66)]
+    for cx, cy in slot_centers:
+        px, py = int(round(cx * w)), int(round(cy * h))
+        assert arr[py, px, 3] > 0, (
+            f"slot at fraction ({cx},{cy}) -> px ({px},{py}) has no alpha; "
+            f"item was not placed there"
+        )
+
+    # The composite as a whole is not all-transparent.
+    assert arr[..., 3].max() > 0, "compose_cluster result is entirely transparent"
+
+
 def test_clean_board_has_no_stock_glyph_ghost():
     from PIL import Image as _I
     board = "Ore"

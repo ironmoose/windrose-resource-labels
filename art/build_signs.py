@@ -46,8 +46,9 @@ timber, bark, hardwood, mahogany, resin, varnish, tarred planks),
 textiles and leathers (flax fiber, fabric, leather variants, tannin,
 tarred fabric, feather, rope, rigging), plus category-bucket signs
 (alchemy ingredients, trade items, animal heads, coins, crafted food,
-ship parts) split cooking-ingredient signs (meats vs. vegetables), and
-combat signs (ranged weapons, melee weapons, ammo).
+ship parts), split cooking-ingredient signs (meats vs. plants, each a
+COMPOSITE of 3 item icons via chalk_restyle.compose_cluster), and combat
+signs (ranged weapons, melee weapons, ammo).
 
 This SUPERSEDES build_v1_47.py (a prior revision of this same script,
 kept for reference/provenance only in the local scratch workspace --
@@ -139,6 +140,7 @@ from chalk_restyle import (  # noqa: E402  (path must be inserted first)
     chalk_restyle as chalk_glyph,
     bake_onto_plaque,
     build_montage,
+    compose_cluster,
     _load_plaque_backing,
     GLYPH_STYLE_SATURATION,
     GLYPH_SHADOW_CUTOFF,
@@ -146,7 +148,20 @@ from chalk_restyle import (  # noqa: E402  (path must be inserted first)
 
 # --------------------------------------------------------------------------
 # THE MANIFEST (52 rows) - VERIFIED, do not re-derive.
-# (source_stem, source_dir, canon_name, final_token, board)
+#
+# Two row shapes:
+#   SINGLE (50 rows, unchanged from prior revisions):
+#     (source_stem, source_dir, canon_name, final_token, board)
+#   COMPOSITE (2 rows: CookingMeats, CookingPlants - multi-item cluster
+#     signs baked via chalk_restyle.compose_cluster):
+#     (sources, canon_name, final_token, board)
+#     where `sources` is a list of (source_stem, source_dir) pairs. List
+#     order is both slot order AND draw order (see compose_cluster's
+#     CLUSTER_LAYOUTS docstring) - the LAST source in the list is drawn
+#     front-center, on top of the other two.
+#
+# `_row_sources()` below normalises either shape to
+# (sources: list[(stem, dir)], canon_name, token, board).
 #
 # `board` is explicit per row, threaded straight into _load_plaque_backing,
 # bypassing chalk_restyle.classify_icon / board_for_icon entirely.
@@ -193,8 +208,18 @@ MANIFEST = [
     ("T_ItemIcon_Craft_Resource_Rope_T1", "V", "Rope", "Rope", "Clothing"),
     ("T_ItemIcon_Craft_T02_LinenThreads_01", "V", "Rigging", "Rigging", "Clothing"),
     ("T_ItemIcon_Craft_T01_AlchemicalBase_01", "V", "Alchemy Ingredients", "AlchemyIngredients", "Alchemy"),
-    ("T_ItemIcon_Loot_Food_Meat_T1", "V", "Cooking Ingredients: Meats", "CookingMeats", "FoodIngridients"),
-    ("T_ItemIcon_Raw_Food_Pepper_T1", "N", "Cooking Ingredients: Vegetables", "CookingVegetables", "FoodIngridients"),
+    (
+        [("T_ItemIcon_Loot_Food_MeatBird_T1", "N"),
+         ("T_ItemIcon_Loot_Food_Meat_T1", "V"),
+         ("T_ItemIcon_Resources_T01_DodoEgg_01", "N")],
+        "Cooking Ingredients: Meats", "CookingMeats", "FoodIngridients",
+    ),
+    (
+        [("T_ItemIcon_Raw_Food_Pepper_T1", "N"),
+         ("T_ItemIcon_Raw_Food_Banana_T3", "N"),
+         ("T_ItemIcon_Raw_Food_Coconut_T1", "N")],
+        "Cooking Ingredients: Plants", "CookingPlants", "FoodIngridients",
+    ),
     ("T_ItemIcon_Consumables_Second_SeafoodPlatter", "V", "Crafted Food", "CraftedFood", "Food"),
     ("T_ItemIcon_Consumables_T01_HealingElixir_01", "V", "Healing Potions", "HealingPotions", "Alchemy"),
     ("T_ItemIcon_Consumables_T1_Strength_01", "V", "Buff Elixirs", "BuffElixirs", "Alchemy"),
@@ -208,6 +233,27 @@ MANIFEST = [
 ]
 
 
+def _row_sources(row):
+    """Normalise a MANIFEST row (SINGLE or COMPOSITE shape - see the MANIFEST
+    docstring above) to (sources, canon_name, token, board), where `sources`
+    is always a list of (source_stem, source_dir) pairs (length 1 for a
+    single-source row, >1 for a composite row).
+    """
+    if isinstance(row[0], list):
+        sources, canon_name, token, board = row
+        return sources, canon_name, token, board
+    stem, src_dir, canon_name, token, board = row
+    return [(stem, src_dir)], canon_name, token, board
+
+
+def _baked_key(sources, token: str) -> str:
+    """Filename stem (no extension) a row's baked PNG is saved/loaded under
+    in BAKED_DIR: the single source's own stem for a single-source row (as
+    before), or the row's final_token for a composite row (which has no one
+    source stem to key off of)."""
+    return sources[0][0] if len(sources) == 1 else token
+
+
 def wipe_and_recreate(d: Path) -> None:
     if d.exists():
         shutil.rmtree(d)
@@ -218,26 +264,28 @@ def main() -> None:
     # ---- Step: assertions against the manifest ----
     assert len(MANIFEST) == 52, f"expected 52 manifest rows, got {len(MANIFEST)}"
 
-    tokens = [row[3] for row in MANIFEST]
+    norm_rows = [_row_sources(row) for row in MANIFEST]
+
+    tokens = [token for _, _, token, _ in norm_rows]
     assert len(tokens) == len(set(tokens)), (
         f"final_token values are not unique: "
         f"{[t for t in tokens if tokens.count(t) > 1]}"
     )
 
     bad_dirs = [
-        (stem, src_dir) for stem, src_dir, _, _, _ in MANIFEST
+        (stem, src_dir) for sources, _, _, _ in norm_rows for stem, src_dir in sources
         if src_dir not in SOURCE_DIRS
     ]
     assert not bad_dirs, f"unknown source_dir marker(s): {bad_dirs}"
 
     missing = [
-        f"{src_dir}:{stem}" for stem, src_dir, _, _, _ in MANIFEST
+        f"{src_dir}:{stem}" for sources, _, _, _ in norm_rows for stem, src_dir in sources
         if not (SOURCE_DIRS[src_dir] / f"{stem}.png").exists()
     ]
     assert not missing, f"missing source icon(s): {missing}"
 
     missing_boards = [
-        (stem, board) for stem, _, _, _, board in MANIFEST
+        (token, board) for _, _, token, board in norm_rows
         if not (PLAQUE_DIR / f"T_PlaqueT02_{board}.png").exists()
     ]
     assert not missing_boards, (
@@ -247,7 +295,8 @@ def main() -> None:
     print(f"[1/7] Manifest embedded: {len(MANIFEST)} rows")
     print(
         f"[2/7] Assertions passed: 52 rows, 52 unique tokens, "
-        f"all sources exist (V + N dirs), all boards resolve to a stock plaque PNG"
+        f"all sources exist (V + N dirs, incl. both composite rows' 3 sources each), "
+        f"all boards resolve to a stock plaque PNG"
     )
 
     # ---- Step: wipe+recreate output dirs ----
@@ -256,30 +305,44 @@ def main() -> None:
     print(f"[3/7] Wiped+recreated {BAKED_DIR} and {FINAL_DIR}")
 
     # ---- Step: bake explicitly per row, bypassing classify_icon/board_for_icon ----
+    # SINGLE rows bake one chalk-restyled glyph straight onto the board, as
+    # before. COMPOSITE rows (CookingMeats, CookingPlants) first cluster all
+    # their source glyphs onto one transparent canvas via compose_cluster
+    # (list order = draw order, last source drawn front-center-on-top), then
+    # bake that composite exactly like a single glyph.
     saturation = GLYPH_STYLE_SATURATION["white"]
     print(f"[4/7] Baking explicitly per row (board taken from manifest, not classified)...")
     row_log = []
-    for stem, src_dir, canon_name, token, board in MANIFEST:
-        src_path = SOURCE_DIRS[src_dir] / f"{stem}.png"
-        with Image.open(src_path) as src:
-            glyph = chalk_glyph(src)
+    for sources, canon_name, token, board in norm_rows:
+        if len(sources) == 1:
+            stem, src_dir = sources[0]
+            src_path = SOURCE_DIRS[src_dir] / f"{stem}.png"
+            with Image.open(src_path) as src:
+                glyph = chalk_glyph(src)
+        else:
+            imgs = []
+            for stem, src_dir in sources:
+                with Image.open(SOURCE_DIRS[src_dir] / f"{stem}.png") as src:
+                    imgs.append(src.convert("RGBA").copy())
+            glyph = compose_cluster(imgs)
         backing, gbox = _load_plaque_backing(board)
         baked = bake_onto_plaque(
             glyph, backing, gbox,
             saturation=saturation,
             shadow_cutoff=GLYPH_SHADOW_CUTOFF,
         )
-        baked.save(BAKED_DIR / f"{stem}.png")
-        row_log.append((token, board, src_dir))
-        print(f"  {token}: board={board} src={src_dir}")
+        baked.save(BAKED_DIR / f"{_baked_key(sources, token)}.png")
+        src_dir_log = "+".join(src_dir for _, src_dir in sources)
+        row_log.append((token, board, src_dir_log))
+        print(f"  {token}: board={board} src={src_dir_log}")
     baked = sorted(BAKED_DIR.glob("*.png"))
     assert len(baked) == 52, f"expected 52 baked outputs, found {len(baked)}"
     print(f"       Baked {len(baked)} PNGs -> {BAKED_DIR}")
 
     # ---- Step: rename to final cooked asset names ----
     final_names = []
-    for stem, _, _, token, _ in MANIFEST:
-        src = BAKED_DIR / f"{stem}.png"
+    for sources, _, token, _ in norm_rows:
+        src = BAKED_DIR / f"{_baked_key(sources, token)}.png"
         final_name = f"T_PlaqueT02_{token}.png"
         shutil.copy2(src, FINAL_DIR / final_name)
         final_names.append(final_name)
@@ -288,17 +351,23 @@ def main() -> None:
     print(f"[5/7] Renamed {len(landed)} baked PNGs to final cooked names -> {FINAL_DIR}")
 
     # ---- Step: write MANIFEST.csv alongside the final icons ----
+    # Composite rows document ALL their sources in one row: source_stem and
+    # source_dir are each the row's stems / dirs joined by "+", in list
+    # (draw) order.
     csv_path = FINAL_DIR / "MANIFEST.csv"
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["source_stem", "source_dir", "canon_name", "final_token", "board"])
-        writer.writerows(MANIFEST)
+        for sources, canon_name, token, board in norm_rows:
+            source_stem = "+".join(stem for stem, _ in sources)
+            source_dir = "+".join(src_dir for _, src_dir in sources)
+            writer.writerow([source_stem, source_dir, canon_name, token, board])
     print(f"[6/7] Wrote manifest -> {csv_path}")
 
     # ---- Step: category-grouped review contact sheet, manifest order ----
     cells = []
-    for stem, _, canon_name, _, _ in MANIFEST:
-        with Image.open(BAKED_DIR / f"{stem}.png") as img:
+    for sources, canon_name, token, _ in norm_rows:
+        with Image.open(BAKED_DIR / f"{_baked_key(sources, token)}.png") as img:
             cells.append((canon_name, img.copy()))
     # cell widened from build_montage's 200px default: the new manifest's
     # longer canon_names ("Cooking Ingredients: Vegetables" etc, up to ~292px
@@ -310,9 +379,10 @@ def main() -> None:
     print(f"[7/7] Montage written ({len(cells)} cells, manifest order) -> {MONTAGE_PATH}")
 
     # ---- Hard assertions ----
-    by_token = {token: (stem, board) for stem, _, _, token, board in MANIFEST}
+    by_token = {token: (sources, board) for sources, _, token, board in norm_rows}
 
-    ship_stem, ship_board = by_token["ShipParts"]
+    ship_sources, ship_board = by_token["ShipParts"]
+    ship_stem = ship_sources[0][0]
     assert ship_board == "Ship", (
         f"ShipParts row must bake onto the Ship board, got {ship_board!r}"
     )
@@ -320,9 +390,12 @@ def main() -> None:
         f"ShipParts row must use the 24-pounder gun icon, got {ship_stem!r}"
     )
 
-    for required_token in ("Timber", "CookingMeats", "CookingVegetables",
+    for required_token in ("Timber", "CookingMeats", "CookingPlants",
                            "RangedWeapons", "MeleeWeapons", "Ammo", "Ash"):
         assert required_token in by_token, f"required token missing from manifest: {required_token}"
+    assert "CookingVegetables" not in by_token, (
+        "CookingVegetables was renamed to CookingPlants; the old token must not remain"
+    )
 
     # ---- Summary ----
     print("Summary")
@@ -332,7 +405,7 @@ def main() -> None:
     print(f"  montage:              {MONTAGE_PATH}")
     print(f"  manifest csv:         {csv_path}")
     print(f"  ShipParts check: PASS (board={ship_board!r}, src={ship_stem!r})")
-    print("  Timber / CookingMeats / CookingVegetables / RangedWeapons / "
+    print("  Timber / CookingMeats / CookingPlants / RangedWeapons / "
           "MeleeWeapons / Ammo / Ash present: PASS")
     print("  final <final_token>:board:src list (manifest order):")
     for token, board, src_dir in row_log:

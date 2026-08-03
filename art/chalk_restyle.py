@@ -595,6 +595,75 @@ def bake_onto_plaque(glyph_rgba: Image.Image, backing: Image.Image,
 
 
 # --------------------------------------------------------------------------
+# Composite clusters (multi-item signs, e.g. Cooking Ingredients)
+# --------------------------------------------------------------------------
+
+# item-count -> list of slot boxes (cx, cy, bw, bh), all as fractions of the
+# cluster canvas. Each source is contain-fit (aspect preserved) into a box of
+# size (bw * W, bh * H) centred at (cx * W, cy * H). List order is BOTH the
+# slot a source lands in AND the draw order (later sources are painted over
+# earlier ones), which is how the 3-item "back-left / back-right /
+# front-center" cluster reads correctly - the front-center item is drawn last
+# so it visually overlaps the two back items rather than being tucked behind
+# them. Layout validated against the sandbox prototype
+# (windrose-signs/gen/composite_proto).
+CLUSTER_LAYOUTS: dict[int, list[tuple[float, float, float, float]]] = {
+    1: [(0.50, 0.50, 0.80, 0.80)],
+    2: [(0.34, 0.50, 0.50, 0.72), (0.66, 0.50, 0.50, 0.72)],
+    3: [(0.30, 0.42, 0.46, 0.55), (0.70, 0.42, 0.46, 0.55), (0.50, 0.66, 0.54, 0.58)],
+    4: [(0.30, 0.30, 0.46, 0.46), (0.70, 0.30, 0.46, 0.46),
+        (0.30, 0.70, 0.46, 0.46), (0.70, 0.70, 0.46, 0.46)],
+}
+
+
+def _evenly_spaced_layout(n: int) -> list[tuple[float, float, float, float]]:
+    """Fallback slot layout for a source count with no explicit entry in
+    CLUSTER_LAYOUTS: n boxes spread evenly in a single centred row."""
+    if n <= 0:
+        return []
+    bw = min(0.9, 0.9 / n)
+    bh = 0.7
+    return [((i + 0.5) / n, 0.5, bw, bh) for i in range(n)]
+
+
+def compose_cluster(sources: list[Image.Image],
+                    canvas: tuple[int, int] = (760, 560)) -> Image.Image:
+    """Compose 1-4 raw item-icon glyphs onto one transparent canvas as a
+    multi-item cluster (used for signs that represent several resources at
+    once, e.g. "Cooking Ingredients: Plants").
+
+    Each source is, in list order: chalk-restyled, had its soft drop-shadow
+    cut, trimmed to its opaque bbox, contain-fit (aspect preserved) into its
+    slot box from CLUSTER_LAYOUTS (or an evenly-spaced fallback for counts
+    with no explicit layout), and alpha-composited onto the shared canvas.
+    List order is draw order too, so later sources land on top of earlier
+    ones (see CLUSTER_LAYOUTS docstring above).
+
+    Returns the composite RGBA glyph on a transparent background. This does
+    NOT apply the bake-time pop/saturation boost (``_glyph_pop``) - the
+    caller bakes the returned composite exactly like a single-source glyph.
+    """
+    w, h = canvas
+    layout = CLUSTER_LAYOUTS.get(len(sources), _evenly_spaced_layout(len(sources)))
+    out = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    for src, (cx, cy, bw, bh) in zip(sources, layout):
+        g = chalk_restyle(src)
+        g = _cut_soft_shadow(g, GLYPH_SHADOW_CUTOFF)
+        bbox = g.getchannel("A").getbbox()
+        if bbox is None:
+            continue
+        g = g.crop(bbox)
+        gw, gh = g.size
+        box_w, box_h = bw * w, bh * h
+        scale = min(box_w / gw, box_h / gh)
+        g = g.resize((max(1, round(gw * scale)), max(1, round(gh * scale))), Image.LANCZOS)
+        ox = int(round(cx * w - g.width / 2))
+        oy = int(round(cy * h - g.height / 2))
+        out.alpha_composite(g, (ox, oy))
+    return out
+
+
+# --------------------------------------------------------------------------
 # Montage
 # --------------------------------------------------------------------------
 
