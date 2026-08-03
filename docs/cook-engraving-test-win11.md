@@ -63,6 +63,27 @@ yourself -- that happens after the Fedora side packs your cooked output.
   you can't change to the listed one, **stop and write down exactly what
   you saw** in the handoff note (Step 6) instead of proceeding.
 
+## Two settings this guide originally missed (added 2026-08-03, Windows run)
+
+The first Windows run could **not** enable Virtual Texture Streaming -- it
+silently reverted to OFF with `VirtualTextureStreaming not supported ... texture
+size is not a power-of-2` -- until two settings were added. Both are now baked
+into the steps below; this note explains why, so a fresh run doesn't rediscover
+them the hard way (both confirmed against Epic's UE docs, not guessed):
+
+1. **Project VT support must be ON:** `r.VirtualTextures=True` in
+   `Config/DefaultEngine.ini` under `[/Script/Engine.RendererSettings]`. UE gates
+   every virtual texture on this project setting (`UTexture::IsVirtualTexturingEnabled`
+   reads it); the `WindroseIcons` cook-kit project shipped without it. See
+   "Before you start" item 4.
+2. **Power Of Two Mode = Pad to Power of Two** on the texture. 1280x384 is not a
+   power of 2, and UE requires power-of-2 dimensions for mips, which VT needs, so
+   VT streaming is refused without this. Pad mode satisfies it at cook time while
+   the asset still reports 1280x384. See the new row in Step 2's table.
+
+With both set, the import logs **0 warnings**, VT sticks, and the cook produces
+the `.ubulk` that gotcha (c) promises. Without them, gotcha (c) cannot come true.
+
 ## Before you start
 
 You will need:
@@ -104,6 +125,24 @@ You will need:
      If it reports anything else, the wrong file was copied -- stop and
      re-copy `tools/cook-kit/engraving-test/T_PlaqueSign_01_M_test.png`
      from the repo before continuing.
+4. **Project Virtual Texture support enabled.** Open
+   `C:\WindroseIcons\Config\DefaultEngine.ini`, find the
+   `[/Script/Engine.RendererSettings]` section (it exists already), and confirm
+   it contains this exact line -- **add it if missing**:
+
+   ```ini
+   [/Script/Engine.RendererSettings]
+   r.VirtualTextures=True
+   ```
+
+   This is exactly what Project Settings > Engine > Rendering > Virtual Textures
+   > "Enable virtual texture support" writes. **Do this before Step 1's import** --
+   with VT support off at the project level, the Texture Editor's Virtual Texture
+   Streaming tick silently reverts to OFF and the whole test is invalid. It does
+   not affect the 52 UI icons (they are non-VT and stay non-VT). If you had to
+   add the line, no editor restart is needed for a headless cook -- the cook
+   commandlet reads config fresh -- but if you have the editor open, restart it
+   so the setting takes.
 
 ## Step 1: Import the test atlas as `T_PlaqueSign_01_M`
 
@@ -144,13 +183,14 @@ right. Each row below is: **property**, **exact value**, **why**.
 
 | Property (Details panel label) | Exact value | Why |
 |---|---|---|
-| **Virtual Texture Streaming** | **ON** (checked) | The real vanilla atlas is a virtual texture; this is the setting the whole pivotal test is about matching. |
+| **Virtual Texture Streaming** | **ON** (checked) | The real vanilla atlas is a virtual texture; this is the setting the whole pivotal test is about matching. **Requires both project VT support (`r.VirtualTextures=True`, Before-you-start item 4) AND Power Of Two Mode = Pad (row below), set first, or this silently reverts to OFF.** |
 | **sRGB** | **OFF** (unchecked) | Vanilla atlas is linear greyscale data, not a color/sRGB image. |
 | **Compression Settings** | **Default** (`TC_Default`, DXT1/BC1 on desktop) | Matches the vanilla atlas's confirmed cooked format (BC1/DXT1). |
 | **Address X** | **Wrap** (`TA_Wrap`) -- **not** Clamp | Matches vanilla; wrong wrap mode can visibly seam or bleed adjacent cells. |
 | **Address Y** | **Wrap** (`TA_Wrap`) -- **not** Clamp | Same as Address X. |
 | **Texture Group** | **World** (`TEXTUREGROUP_World`) | Matches vanilla; this is a world-placed decal atlas, not a UI icon (do not confuse with the 52-icon cook's `UI` group -- that's a different, unrelated asset). |
 | **Mip Gen Settings** | **FromTextureGroup** (`TMGS_FromTextureGroup`) | Matches vanilla; lets the World texture group's own mip policy apply, same as every other world-placed texture. |
+| **Power Of Two Mode** | **Pad to Power of Two** (`ETexturePowerOfTwoSetting::PadToPowerOfTwo`) | 1280x384 is not power-of-2; UE needs po2 for mips and VT needs mips, so **without this, Virtual Texture Streaming above silently refuses to turn on**. Pad mode satisfies po2 at cook time while the asset still reports 1280x384. In the Texture Editor this is under the **Compression** section (may be collapsed under "Advanced"). **Set this before ticking Virtual Texture Streaming** so the VT eligibility check sees po2 dims. |
 
 **On the greyscale source format (G8):** there is no separate manual toggle
 for this. Unreal derives the texture's internal **Source Format** (shown as
@@ -374,7 +414,24 @@ earlier 52-icon cook had mips disabled and produced only `.uasset` +
 `.uexp` pairs, no `.ubulk`. This asset has Virtual Texture Streaming ON
 (Step 2), so it cooks with a `.ubulk` bulk-data file too. **All three
 files (`.uasset` + `.uexp` + `.ubulk`) belong together and must be handed
-back together** -- do not hand back only two of the three.
+back together** -- do not hand back only two of the three. **But the `.ubulk`
+only appears once the two settings in "Two settings this guide originally
+missed" are in place.** If the cook produces only `.uasset` + `.uexp` and no
+`.ubulk`, VT did not actually turn on -- re-check `r.VirtualTextures=True` and
+Power Of Two Mode = Pad, do not proceed as if it were a VT. A confirmed-good VT
+cook of this asset was: `.uasset` ~1.1 KB, `.uexp` ~1 KB (tiny -- pixel data
+moved out), `.ubulk` ~831 KB. A non-VT cook by contrast was `.uexp` ~320 KB and
+**no** `.ubulk`.
+
+**(d) Python accessor quirks on UE 5.6.1 (verification script, Step 5).** Two
+things bit the Step 5 script on this build; neither is an asset problem:
+- `Texture2D` has **no** `get_size_x()` / `get_size_y()` on 5.6.1 -- use
+  `tex.blueprint_get_size_x()` / `blueprint_get_size_y()` instead (or wrap both
+  in try/except and fall back, which the Step 5 script already does).
+- There is **no `unreal.TextureSource`** accessor to read the G8 Source Format
+  back programmatically. G8 could not be machine-verified; rely on the source
+  PNG being genuine 8-bit greyscale (Pillow mode `L`) instead, and note it as
+  unverified in the handoff rather than treating it as a failure.
 
 ## Troubleshooting
 
@@ -389,7 +446,22 @@ exactly what it shows in the handoff note. Do not try to force it via any
 other setting; there is no direct user control for source format, only the
 Details panel properties listed in Step 2's table.
 
+**Virtual Texture Streaming won't stay ON / cook produces no `.ubulk`.** This
+is the exact failure the first Windows run hit. Two independent causes, both
+required:
+1. Project VT support is off -- add `r.VirtualTextures=True` under
+   `[/Script/Engine.RendererSettings]` in `DefaultEngine.ini` (Before-you-start
+   item 4). Symptom: log line `VirtualTextureStreaming not supported ...`.
+2. Power Of Two Mode is not set to Pad -- 1280x384 isn't power-of-2 and VT needs
+   po2 mips, so it's refused even with (1) done. Set Power Of Two Mode = Pad to
+   Power of Two (Step 2 table). Symptom: the same `... texture size is not a
+   power-of-2` log line persists after fixing (1).
+Fix both, re-import, re-cook. A real VT cook writes a tiny `.uexp` and a large
+`.ubulk`; if `.uexp` is still large and there's no `.ubulk`, VT never turned on.
+
 **Any Step 5 verification line says FAIL.** Do not treat a partial pass as
 good enough. Copy the full results file contents into the handoff note
 honestly, including which checks failed, and let a human decide whether to
-retry or investigate further.
+retry or investigate further. (Note: with the two VT settings above in place,
+the `virtual_texture_streaming` and `.ubulk` lines should both PASS -- if they
+FAIL, that's the VT-not-on problem above, not a cook error.)
