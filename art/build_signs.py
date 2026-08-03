@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""build_signs.py - the batch builder for the mod's 51-sign V1 set.
+"""build_signs.py - the batch builder for the mod's 52-sign V1 set.
 
 WHAT THIS DOES (for a reader with zero session history):
 
@@ -12,7 +12,7 @@ textures. Every sign in this batch uses the WHITE glyph preset, and the
 board is chosen EXPLICITLY per sign (see the manifest below), not
 auto-classified.
 
-The output of a full run is 51 PNGs, one per sign, named
+The output of a full run is 52 PNGs, one per sign, named
 `T_PlaqueT02_<final_token>.png`. Those files are the SourceIcons handed
 to the STEP 3 Unreal cook -- see `tools/cook-kit/import_icons.py` and
 `docs/cook-kit-win11.md` in this repo for that next stage of the
@@ -38,7 +38,7 @@ same way `tools/cook-kit/import_icons.py` needs a running Unreal Editor
 to execute -- both are checked in for provenance and reproducibility,
 not turnkey execution.
 
-THE 51-SIGN SET THIS SCRIPT ENCODES:
+THE 52-SIGN SET THIS SCRIPT ENCODES:
 
 Metals and minerals (ores, ingots, stone, clay, coal, quartz, obsidian,
 sulfur, saltpeter), woods and wood products (logs, sticks, planks,
@@ -54,7 +54,7 @@ kept for reference/provenance only in the local scratch workspace --
 it is not part of this repo). It is a reproducible driver around
 `art/chalk_restyle.py` (NOT modified here). It:
 
-  1. Embeds the VERIFIED 51-row manifest (source_stem, source_dir, canon_name,
+  1. Embeds the VERIFIED 52-row manifest (source_stem, source_dir, canon_name,
      final_token, board) - do not re-derive this mapping, it is the source of
      truth. See the SOURCE_DIRS comment below for what the source_dir letter
      means. The `board` column is EXPLICIT per row (not derived from
@@ -132,7 +132,7 @@ SOURCE_DIRS = {"V": SRC_ICONS_DIR_V, "N": SRC_ICONS_DIR_N}
 BAKED_DIR = SIGNS_SCRATCH_ROOT / "gen" / "v1_signs_baked"
 FINAL_DIR = SIGNS_SCRATCH_ROOT / "gen" / "v1_signs_final"
 PLAQUE_DIR = SIGNS_SCRATCH_ROOT / "gen" / "reference_icons"
-MONTAGE_PATH = NOTES_MILESTONES_DIR / "2026-08-02-v1-51-baked-WHITE-preview.png"
+MONTAGE_PATH = NOTES_MILESTONES_DIR / "2026-08-02-v1-52-baked-WHITE-preview.png"
 
 sys.path.insert(0, str(REPO_ART_DIR))
 from chalk_restyle import (  # noqa: E402  (path must be inserted first)
@@ -145,7 +145,7 @@ from chalk_restyle import (  # noqa: E402  (path must be inserted first)
 )
 
 # --------------------------------------------------------------------------
-# THE MANIFEST (51 rows) - VERIFIED, do not re-derive.
+# THE MANIFEST (52 rows) - VERIFIED, do not re-derive.
 # (source_stem, source_dir, canon_name, final_token, board)
 #
 # `board` is explicit per row, threaded straight into _load_plaque_backing,
@@ -171,6 +171,7 @@ MANIFEST = [
     ("T_ItemIcon_Resources_T03_Obsidian_01", "V", "Obsidian", "Obsidian", "Ore"),
     ("T_ItemIcon_Raw_Resource_Sulfur_T1", "V", "Sulfur", "Sulfur", "Ore"),
     ("T_ItemIcon_Craft_T02_Saltpeter_01", "V", "Saltpeter", "Saltpeter", "Ore"),
+    ("T_ItemIcon_Craft_T01_Ash_01", "N", "Ash", "Ash", "Ore"),
     ("T_ItemIcon_Raw_Resource_Wood_T1", "V", "Wood", "WoodLog", "Wood"),
     ("T_ItemIcon_Resources_T01_SticksWood_01", "V", "Sticks", "Sticks", "Wood"),
     ("T_ItemIcon_Craft_T01_PlanksWood_01", "V", "Planks", "Planks", "Wood"),
@@ -215,7 +216,7 @@ def wipe_and_recreate(d: Path) -> None:
 
 def main() -> None:
     # ---- Step: assertions against the manifest ----
-    assert len(MANIFEST) == 51, f"expected 51 manifest rows, got {len(MANIFEST)}"
+    assert len(MANIFEST) == 52, f"expected 52 manifest rows, got {len(MANIFEST)}"
 
     tokens = [row[3] for row in MANIFEST]
     assert len(tokens) == len(set(tokens)), (
@@ -245,7 +246,7 @@ def main() -> None:
 
     print(f"[1/7] Manifest embedded: {len(MANIFEST)} rows")
     print(
-        f"[2/7] Assertions passed: 51 rows, 51 unique tokens, "
+        f"[2/7] Assertions passed: 52 rows, 52 unique tokens, "
         f"all sources exist (V + N dirs), all boards resolve to a stock plaque PNG"
     )
 
@@ -272,7 +273,7 @@ def main() -> None:
         row_log.append((token, board, src_dir))
         print(f"  {token}: board={board} src={src_dir}")
     baked = sorted(BAKED_DIR.glob("*.png"))
-    assert len(baked) == 51, f"expected 51 baked outputs, found {len(baked)}"
+    assert len(baked) == 52, f"expected 52 baked outputs, found {len(baked)}"
     print(f"       Baked {len(baked)} PNGs -> {BAKED_DIR}")
 
     # ---- Step: rename to final cooked asset names ----
@@ -283,7 +284,7 @@ def main() -> None:
         shutil.copy2(src, FINAL_DIR / final_name)
         final_names.append(final_name)
     landed = sorted(FINAL_DIR.glob("*.png"))
-    assert len(landed) == 51, f"expected 51 final-named files, found {len(landed)}"
+    assert len(landed) == 52, f"expected 52 final-named files, found {len(landed)}"
     print(f"[5/7] Renamed {len(landed)} baked PNGs to final cooked names -> {FINAL_DIR}")
 
     # ---- Step: write MANIFEST.csv alongside the final icons ----
@@ -320,7 +321,7 @@ def main() -> None:
     )
 
     for required_token in ("Timber", "CookingMeats", "CookingVegetables",
-                           "RangedWeapons", "MeleeWeapons", "Ammo"):
+                           "RangedWeapons", "MeleeWeapons", "Ammo", "Ash"):
         assert required_token in by_token, f"required token missing from manifest: {required_token}"
 
     # ---- Summary ----
@@ -332,7 +333,7 @@ def main() -> None:
     print(f"  manifest csv:         {csv_path}")
     print(f"  ShipParts check: PASS (board={ship_board!r}, src={ship_stem!r})")
     print("  Timber / CookingMeats / CookingVegetables / RangedWeapons / "
-          "MeleeWeapons / Ammo present: PASS")
+          "MeleeWeapons / Ammo / Ash present: PASS")
     print("  final <final_token>:board:src list (manifest order):")
     for token, board, src_dir in row_log:
         print(f"    {token}: board={board} src={src_dir}")
