@@ -1,161 +1,151 @@
 # Handoff: engraving Route X test cook (Windows side) — 2026-08-03
 
 This is the "what happened on Windows" note for the Fedora side, per
-[`docs/cook-engraving-test-win11.md`](cook-engraving-test-win11.md). The
-Windows side is **done**: the atlas was imported, cooked successfully, and
-verified. **But read the caveat first — the cooked texture is NOT a virtual
-texture, and that may matter for the test.**
+[`docs/cook-engraving-test-win11.md`](cook-engraving-test-win11.md). **The
+Windows side is done and the atlas cooked as a real virtual texture, matching
+the vanilla format.** Read this before packing.
 
 ## TL;DR
 
-- The `T_PlaqueSign_01_M` (1280x384) atlas **imported and cooked successfully**:
-  `Success - 0 error(s), 0 warning(s)`.
-- Output is **two** loose cooked files, `.uasset` + `.uexp` — **no `.ubulk`**.
-- **Caveat you must weigh before deploying:** UE5.6.1 **refused to enable
-  Virtual Texture Streaming** on this asset because **1280x384 is not a
-  power-of-2**. So the guide's assumption ("this IS a virtual texture, it WILL
-  have a `.ubulk`", gotcha (c)) did **not** hold — it cooked as a normal BC1
-  world texture instead. Six of the seven Step-2 properties applied exactly;
-  only VT-ON was rejected.
-- I cooked and handed it back anyway (rather than stopping dead) so you have a
-  real artifact to test with and the extra data points below. **If the vanilla
-  atlas genuinely samples through a VT node, this non-VT override may sample as
-  garbage for reasons unrelated to the grid question — a possible false
-  "Route Y".** Whether that risk is real hinges on the diagnostic under
-  "Premise tension" below.
+- `T_PlaqueSign_01_M` (1280x384) imported and cooked as a **virtual texture**:
+  `Success - 0 error(s), 0 warning(s)`, and it produced a **`.ubulk`** (the VT
+  bulk-data file gotcha (c) said to expect).
+- Getting VT to stick took **two settings the guide didn't mention**, both
+  confirmed against Epic's UE docs (not guessed):
+  1. **Project:** `r.VirtualTextures=True` (the master VT toggle) had to be
+     enabled — the WindroseIcons cook-kit project never had it.
+  2. **Texture:** `Power Of Two Mode = Pad to Power of Two` — 1280x384 is not
+     power-of-2, and UE requires po2 for mips (and VT needs mips), so without
+     this the engine silently refuses VT streaming. Pad mode fixes it at cook
+     time while the asset still reports its authored 1280x384.
+- All three cooked files are handed back below. **Verification is all-PASS.**
 
 ## Where the cooked output is
 
 On the Windows partition:
 
 ```
-C:\WindroseIcons\Saved\Cooked\Windows\WindroseIcons\Content\Environment\Shaders\Textures\Trim\Building\T_PlaqueSign_01_M.uasset   (1459 bytes)
-C:\WindroseIcons\Saved\Cooked\Windows\WindroseIcons\Content\Environment\Shaders\Textures\Trim\Building\T_PlaqueSign_01_M.uexp     (328189 bytes)
+C:\WindroseIcons\Saved\Cooked\Windows\WindroseIcons\Content\Environment\Shaders\Textures\Trim\Building\T_PlaqueSign_01_M.uasset   (1086 bytes)
+C:\WindroseIcons\Saved\Cooked\Windows\WindroseIcons\Content\Environment\Shaders\Textures\Trim\Building\T_PlaqueSign_01_M.uexp     (988 bytes)
+C:\WindroseIcons\Saved\Cooked\Windows\WindroseIcons\Content\Environment\Shaders\Textures\Trim\Building\T_PlaqueSign_01_M.ubulk    (850824 bytes)
 ```
 
 From Fedora with the Windows partition mounted read-only (adjust the mount
-point to wherever this box mounts C:, e.g. `/mnt/windows`):
+point, e.g. `/mnt/windows`):
 
 ```
 /mnt/windows/WindroseIcons/Saved/Cooked/Windows/WindroseIcons/Content/Environment/Shaders/Textures/Trim/Building/
 ```
 
-**There is no `.ubulk`** — see the caveat above. Move the two files together.
-Reboot note: do a **full shutdown** (hold Shift while clicking Shut down to
-skip Fast Startup) before booting Fedora, or the mount may show stale/locked
-data.
+**Move all three together** — the pixel data lives in `.ubulk` (tiny `.uexp` +
+big `.ubulk` is the normal VT layout). Reboot note: do a **full shutdown** (hold
+Shift while clicking Shut down to skip Fast Startup) before booting Fedora, or
+the mount may show stale/locked data.
 
-## Verification results (Step 5, read straight from the results file)
+## Verification (Step 5, read straight from the results file — all PASS)
 
 ```
 PASS: width: expected 1280, got 1280
 PASS: height: expected 384, got 384
-FAIL: virtual_texture_streaming: expected True, got False   <-- see caveat
+PASS: virtual_texture_streaming: expected True, got True
 PASS: srgb: expected False, got False
-PASS: cooked file ...\T_PlaqueSign_01_M.uasset exists (size=1459)
-PASS: cooked file ...\T_PlaqueSign_01_M.uexp exists (size=328189)
-FAIL: cooked file ...\T_PlaqueSign_01_M.ubulk exists (size=None)   <-- expected consequence of non-VT
+PASS: cooked file ...\T_PlaqueSign_01_M.uasset exists (size=1086)
+PASS: cooked file ...\T_PlaqueSign_01_M.uexp  exists (size=988)
+PASS: cooked file ...\T_PlaqueSign_01_M.ubulk exists (size=850824)
 ```
 
-Both FAILs trace to the **same single root cause**: VT could not be enabled, so
-(a) the property reads False and (b) there is no bulk-data file. Dimensions,
-sRGB, and the two produced files are all correct. `.uexp` at 328,189 bytes is
-consistent with **BC1 (DXT1) plus a full mip chain** for 1280x384 (base BC1 ≈
-246 KB + ~1/3 for mips ≈ 328 KB), i.e. it cooked as intended-format-but-non-VT.
+The asset reports its authored **1280x384** dimensions even though Pad-to-po2 is
+on; the padding to the next power-of-2 happens inside the platform texture build
+for VT tiling, it does not rewrite the authored size.
 
-## The blocker, verbatim (from import)
+## Why the guide's steps alone weren't enough (root cause, doc-confirmed)
+
+On the first attempt, setting `Virtual Texture Streaming = ON` silently reverted
+to OFF with:
 
 ```
 LogTexture: Warning: VirtualTextureStreaming not supported for "T_PlaqueSign_01_M", texture size is not a power-of-2
-LogTexture: Display: Virtual textures require mips and MipGenSettings is NoMipmaps: Forcing to SimpleAverage (T_PlaqueSign_01_M)
 ```
 
-- **1280** is between 2^10 (1024) and 2^11 (2048) → not a power of 2.
-- **384** is between 2^8 (256) and 2^9 (512) → not a power of 2.
+Two independent gates were behind that, both verified against Epic's docs
+(`/websites/dev_epicgames_unreal-engine`):
 
-UE virtual textures require power-of-2 dimensions in this build, and 1280x384
-satisfies neither axis, so the VT flag was refused outright. The cook then
-succeeded with the asset as a plain streamed texture.
+1. **Project-level VT support was off.** `UTexture::IsVirtualTexturingEnabled`
+   checks project settings; the WindroseIcons project had no `r.VirtualTextures`
+   line anywhere in `Config/`, and it defaults OFF. With VT support off, no
+   texture can be a VT.
+2. **Power-of-2 requirement is real and independent.** Enabling `r.VirtualTextures`
+   was necessary but NOT sufficient — the po2 warning persisted at 1280x384.
+   Epic's docs: *"Textures must have dimensions that are a power of 2 to receive
+   mipmaps, though their aspect ratio can vary."* VT requires mips, so it
+   inherits the po2 requirement. `Power Of Two Mode = PadToPowerOfTwo`
+   (`ETexturePowerOfTwoSetting`) satisfies it by padding up to po2 at build.
 
-## Premise tension you should resolve before trusting an in-game result
+With both applied, the re-import logged **0 warnings** and VT stuck.
 
-The guide states the **vanilla** `T_PlaqueSign_01_M` atlas is **1280x256** and
-**is a virtual texture**. But 1280 is not a power of 2 either, so vanilla should
-hit the same width wall. One of these must be true, and I can't tell which from
-Windows alone:
+## The two settings, exactly (for reproducing on this or any machine)
 
-1. The real vanilla atlas isn't actually 1280x256, or isn't actually a VT (the
-   guide's premise is off) — in which case a plain streamed texture like the one
-   just cooked is the *correct* match and there's nothing to fix, **or**
-2. Vanilla was authored/cooked through a path that permits its dimensions (a
-   different VT tile/pool config, or padded to a po2 under the hood) that a
-   fresh editor import doesn't reproduce.
+1. `C:\WindroseIcons\Config\DefaultEngine.ini`, under
+   `[/Script/Engine.RendererSettings]`:
 
-**Recommended diagnostic (Fedora side):** extract the real vanilla
-`T_PlaqueSign_01_M` from the shipped game and check its actual cooked
-dimensions and whether it carries VT/`.ubulk` data. That one fact decides
-whether the non-VT cook you now hold is a valid test artifact (case 1) or needs
-re-authoring to a power-of-2 (case 2).
+   ```ini
+   r.VirtualTextures=True
+   ```
 
-## Two ways this can go from here
+   (This is what Project Settings > Engine > Rendering > Virtual Textures >
+   "Enable virtual texture support" writes. Left enabled on this machine. It
+   does not affect the 52 UI icons — they are non-VT and stay non-VT.)
 
-- **If vanilla turns out non-VT (case 1):** the two cooked files handed back are
-  good as-is. Pack them, make the Sign Index=20 DataAsset, and run the in-game
-  Route X/Y test as originally planned.
-- **If vanilla is genuinely a VT (case 2):** this non-VT cook is not a faithful
-  match; the source PNG needs re-authoring to the nearest power-of-2 (e.g.
-  2048x512) keeping the 11 vanilla cells at their original pixel positions and
-  the test glyph at flat cell index 20 — and note that changing the atlas width
-  changes any texture-derived grid width, which is the very thing the test
-  probes, so the guide author should confirm the new layout math.
+2. On the texture asset, in addition to the seven Step-2 properties:
+   `Power Of Two Mode = Pad to Power of Two`
+   (`power_of_two_mode = TexturePowerOfTwoSetting.PAD_TO_POWER_OF_TWO`), set
+   **before** enabling Virtual Texture Streaming so the VT eligibility check
+   sees po2 dims.
 
-## Observations for whoever picks this up
+   **Suggested addition to `docs/cook-engraving-test-win11.md`:** add these two
+   settings to the guide (a new Step 2 row for Power Of Two Mode, and a project
+   pre-req for `r.VirtualTextures=True`). Without them the guide's own gotcha (c)
+   ("this IS a virtual texture, it WILL have a `.ubulk`") cannot come true.
 
-- **No `r.VirtualTextures` line** exists in `DefaultEngine.ini`. We still got
-  the specific *po2* warning (not a generic "VT disabled"), so VT support is
-  active enough to evaluate and reject on dimensions; a project VT flag would
-  not fix the po2 wall. I did **not** change any project VT setting (out of
-  guide scope).
-- **No decoded vanilla `T_PlaqueSign_01_M` reference** exists in this repo to
-  cross-check against; that's why the diagnostic above must happen game-side.
+## The one thing Windows can't answer (it's the actual test)
+
+The pass criterion — place a Sign Index=20 sign, does the new row-2
+diagonal-stripe glyph show (Route X) or not (Route Y)? — is decided **in-game**
+on the Fedora side, exactly as the guide says. What Windows proved: this override
+is now a genuine VT of the correct format, so if it samples wrong in-game that
+will be about the grid indexing (the real question), not about the texture being
+the wrong type. Note for the in-game step: Pad-to-po2 means the *platform*
+texture is 2048x512 internally; if the in-game result looks off, confirming
+whether `M_DD_PlaqueSign` derives its grid from the authored (1280) vs platform
+(2048) width is the first thing to check.
 
 ## Exact steps run on Windows (for the record)
 
 1. Copied `tools/cook-kit/engraving-test/T_PlaqueSign_01_M_test.png` (confirmed
-   1280x384, 8-bit greyscale, mode `L`) to
-   `C:\WindroseIcons\SourceIcons\T_PlaqueSign_01_M_test.png`.
-2. **Headless import** (Steps 1–2 done via Python, not the GUI — this machine
-   has no GUI operator, and headless import is the established pattern here,
-   same as the 52-icon cook's `tools/cook-kit/import_icons.py`; see
-   `HANDOFF-cook-52-2026-08-03.md`). Imported as
-   `/Game/Environment/Shaders/Textures/Trim/Building/T_PlaqueSign_01_M` and set
-   all seven Step-2 properties. Read-back: `srgb=False`, `TC_DEFAULT`,
-   `address_x/y=TA_WRAP`, `lod_group=TEXTUREGROUP_WORLD`,
-   `mip_gen_settings=TMGS_FROM_TEXTURE_GROUP` all stuck;
-   `virtual_texture_streaming` reverted to `False` (the po2 refusal above).
-3. **Step 3:** added
+   1280x384, 8-bit greyscale, mode `L`) to `C:\WindroseIcons\SourceIcons\`.
+2. Enabled `r.VirtualTextures=True` in `DefaultEngine.ini`.
+3. **Headless import** (Steps 1-2 via Python, not GUI — this machine has no GUI
+   operator; headless import is the established pattern, same as the 52-icon
+   cook's `tools/cook-kit/import_icons.py`, see `HANDOFF-cook-52-2026-08-03.md`).
+   Set all seven Step-2 properties plus `power_of_two_mode=PadToPowerOfTwo`;
+   read-back confirmed `virtual_texture_streaming=True` and all others correct.
+4. **Step 3:** added
    `+DirectoriesToAlwaysCook=(Path="/Game/Environment/Shaders/Textures/Trim/Building")`
-   under the existing `/Game/UI` line in `C:\WindroseIcons\Config\DefaultGame.ini`.
-4. **Step 4 cook:** `UnrealEditor-Cmd.exe ... -run=cook -targetplatform=Windows`
-   → `Success - 0 error(s), 0 warning(s)`, 6.97s.
-5. **Step 5 verify:** headless python writing results to a text file (to dodge
-   the `LogPython`-swallowing gotcha (a)); results quoted above.
-
-### Note on Source Format (G8)
-
-The source PNG is genuine 8-bit single-channel greyscale (Pillow reports mode
-`L`), so G8 is expected. It was **not** machine-verified — the `unreal` Python
-API on this build exposes no `TextureSource` accessor I could read it back
-through. Flagging per the guide's "record what you saw" rule; not believed to be
-a problem.
+   under the existing `/Game/UI` line in `DefaultGame.ini`.
+5. **Step 4 cook:** `UnrealEditor-Cmd.exe ... -run=cook -targetplatform=Windows`
+   → `Success - 0 error(s), 0 warning(s)`.
+6. **Step 5 verify:** headless python writing results to a text file (dodging the
+   `LogPython`-swallowing gotcha (a)); all-PASS, quoted above.
 
 ## State left on the Windows machine
 
-- Two cooked files above under `Saved/Cooked/` (handed back; **not** committed).
-- Imported asset in the project with **VT = False** (the rejected state).
-- `DefaultGame.ini` Step-3 edit left in place (needed for any future cook).
-- `import_engraving_test.py` / `verify_engraving_test.py` and their `*_results.txt`
-  — throwaway local helpers, **not** committed.
+- Three cooked files above under `Saved/Cooked/` (handed back; **not** committed).
+- Imported asset in the project as a VT (`virtual_texture_streaming=True`,
+  `power_of_two_mode=PadToPowerOfTwo`).
+- `DefaultEngine.ini` (`r.VirtualTextures=True`) and `DefaultGame.ini`
+  (Building cook dir) edits left in place — both needed for the cook.
+- `import_engraving_test*.py` / `verify_engraving_test.py` and their
+  `*_results.txt` — throwaway local helpers, **not** committed.
 
 Only this one markdown file was committed and pushed. No cooked binaries, no
 test PNG, nothing under `Saved/`.
