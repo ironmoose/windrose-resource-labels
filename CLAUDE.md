@@ -59,6 +59,25 @@ Labels are data-driven:
 - **The atlas IS a virtual texture** (confirmed on the live object). The earlier "not a VT" claim is withdrawn for good.
 - **Generic vanilla decal masters (`M_DD_AMRO/AMRON/AMREON`) will NOT work** on the sign Plane -- `M_DD_PlaqueSign` is a *mesh-sticker* decal (`Use WPO MeshSticker` + `MF_MeshSticker`), they are *projected* decals. Even their own default texture renders blank.
 
+> **BLOCKED 2026-08-04 (see `docs/HANDOFF-COMPLETE-2026-08-04.md` section 12): UE4SS CANNOT BE BUILT FROM SOURCE.**
+> Its required submodule `deps/first/Unreal` points at `Re-UE4SS/UEPseudo`, which
+> **no longer exists on GitHub** (404 on every URL and org, no forks found). So
+> neither UE4SS nor a UE4SS C++ mod can be compiled from the source tree. A
+> workaround is designed but not built: a plain DLL that pins itself in `DllMain`
+> (UE4SS calls `LoadLibraryExW` on a mod before checking its exports), needing no
+> UE4SS SDK. The genuinely hard part remains finding
+> `FShaderCodeLibrary::OpenLibrary` by signature scan in a stripped 291 MB
+> shipping binary -- **a research task, not a deadline task.**
+>
+> **DECISION: ship the 10-glyph version first** -- 52 labels, custom menu icons,
+> engraving drawn from the ten vanilla glyphs via the DataAsset index. Pure pak,
+> no install burden for other players or the dedicated server.
+>
+> **FIRST settle the label->index mapping. `Ore = index 6` below may be off by
+> one:** loc keys run 1..10 and `CPD04 = 0` is confirmed in game to render
+> CookedFood (key 1), implying `index = key - 1` and therefore **Ore = 5**. See
+> section 13 of that handoff.
+
 **Prove this first, before building anything else:** a UE4SS mod that does nothing but call `FShaderCodeLibrary::OpenLibrary` for our library and log the outcome. `OpenLibrary` is a static engine function, not a UObject, so it needs its address found by signature scan — that is the one genuinely unproven step. If our material renders after the shim, the rest is work already done on 2026-08-04. If it does not, fall back to the 20-cell plan (per-label MIs parented to the game's material with differing `Sign Index Override`) knowing exactly why.
 
 **Already built and reusable:** cook project `C:\R5Cook` (named `R5` so shader archives match), `M_WRL_PlaqueEngraving` (decal material with a `SignTexture` parameter), a glyph-extraction script that pulls clean silhouettes from the 52 menu icons, and the retoc pack/deploy loop on Windows.

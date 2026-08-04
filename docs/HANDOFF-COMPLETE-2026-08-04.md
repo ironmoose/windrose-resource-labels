@@ -474,3 +474,119 @@ clean checkout, and it is what blocked shipping from Windows tonight.
 5. Keep using UE4SS for diagnosis regardless. It converted a day of guessing
    into direct measurement, and every remaining question about runtime behaviour
    should be answered that way rather than from cooked bytes.
+
+---
+
+## 12. LATE FINDING — the shim is BLOCKED: UE4SS cannot be built from source
+
+Discovered at the end of the session, after §7 was written. **§7's build steps
+will not work.** Read this before attempting them.
+
+### The blocker
+UE4SS's build requires the submodule `deps/first/Unreal`, whose URL in
+`.gitmodules` is `git@github.com:Re-UE4SS/UEPseudo.git` (the Unreal type
+definitions UE4SS compiles against).
+
+**That repository no longer exists.** Verified:
+```
+git ls-remote https://github.com/Re-UE4SS/UEPseudo.git   -> Repository not found
+git ls-remote https://github.com/UE4SS-RE/UEPseudo.git   -> Repository not found
+gh search repos UEPseudo                                 -> [] (no results)
+```
+Deleted or made private. Without it `xmake f` fails with
+`includes("Unreal") cannot find any files!`, so **neither UE4SS nor any UE4SS
+C++ mod can be built from this source tree.**
+
+The `zDEV-UE4SS_v3.0.1.zip` release asset does **not** help — it is a debug
+build (DLL + PDB + signatures + config templates), not an SDK. No headers.
+
+Also note: `xmake` in Git Bash auto-detects the **mingw** platform from
+`C:\Program Files\Git\mingw64` and refuses the project. Pass `-p windows`.
+
+### The workaround (designed, not built)
+`UE4SS/src/Mod/CppMod.cpp` loads a C++ mod like this:
+```cpp
+m_main_dll_module = LoadLibraryExW(dll_path, ...);              // DllMain runs HERE
+m_start_mod_func  = GetProcAddress(m_main_dll_module, "start_mod");
+m_uninstall_mod_func = GetProcAddress(m_main_dll_module, "uninstall_mod");
+if (!m_start_mod_func || !m_uninstall_mod_func) { FreeLibrary(...); }
+```
+`LoadLibraryExW` runs `DllMain` **before** the exports are checked. So a
+**plain DLL with no UE4SS dependency at all** can do the work:
+1. In `DllMain`, pin the module (`GetModuleHandleExW` with
+   `GET_MODULE_HANDLE_EX_FLAG_PIN`) so UE4SS's `FreeLibrary` cannot unload it.
+2. Spawn a worker thread; wait until the game and mod paks are up.
+3. Pattern-scan for `FShaderCodeLibrary::OpenLibrary` and call it.
+
+Compiles with plain `cl.exe` (MSVC 14.44 is installed) — no xmake, no
+submodule, no SDK. Drop at `Mods/WRLShaderLoader/dlls/main.dll`.
+
+### What is still genuinely hard
+Finding `FShaderCodeLibrary::OpenLibrary(const FString& Name, const FString& Directory)`
+in a **stripped 291 MB shipping binary**. It is a static function, not a
+`UObject`, so there is no reflection path — it needs a byte-signature scan plus
+verification that the hit is really that function. Losing UE4SS's bundled
+`patternsleuth` integration makes this harder, not easier.
+
+**Estimate: this is a research task, not an afternoon of work.** Do not put it
+on a deadline.
+
+### Half-built state left in the tree
+`~/workspaces/tools/RE-UE4SS/cppmods/WRLShaderLoader/{Main.cpp,xmake.lua}` and
+an `includes("WRLShaderLoader")` line added to `cppmods/xmake.lua`. `Main.cpp`
+is a `CppUserModBase` subclass that logs and does nothing else — it **cannot be
+compiled** without the missing submodule and should be rewritten as the plain
+DLL described above.
+
+---
+
+## 13. LATE FINDING — the label -> index mapping is NOT settled
+
+`CLAUDE.md` has said "Ore = index 6" for a long time. **That may be off by one.**
+
+What is actually known:
+- Each `DA_BI_Utilities_Lables_Wooden_*.uexp` contains a localisation key
+  `Building_Lable_<n>` with n = 1..10, reliably extractable by regex:
+
+  | key | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+  |---|---|---|---|---|---|---|---|---|---|---|
+  | label | CookedFood | FoodIngridients | Clothing | Weapons | Alchemy | Ore | Wood | Ship | Treasure | Trade |
+
+- **Confirmed in game:** `CPD04 = 0` renders the **drumstick**, i.e. CookedFood,
+  i.e. loc key **1**. So `index = key - 1`, which would make **Ore = 5, not 6**.
+- Consistent with the stepper result: ten distinct glyphs, then blanks.
+
+There IS a float index field inside each DataAsset, but **it cannot be read at a
+fixed byte offset** — the struct layout shifts with the asset's string lengths
+(Alchemy's value sat at a different offset from the rest), so a naive offset
+scan returns garbage. Parse it by property name, or settle it empirically.
+
+**Settle this before wiring 52 labels to indices.** Empirical method, one minute
+in game with the probe already installed: press F8 to step the index and note
+which glyph appears at which number, then compare against the table above.
+Getting it wrong shifts every label's engraving by one.
+
+---
+
+## 14. DECISION (end of session)
+
+**Do NOT chase the shim for the near-term release.** It is blocked on a research
+task (§12) with no reliable estimate, and even when it works it requires UE4SS
+installed and version-matched on every client *and* the dedicated server.
+
+**Ship the 10-glyph version instead** (§5.7): 52 labels, each with its own
+custom menu icon (already built and user-verified), in-world engraving drawn
+from the ten vanilla glyphs via each DataAsset's index. Pure pak — nothing for
+other players or the server to install. Players identify the exact resource by
+its unique menu icon; the plaque carves a category glyph.
+
+That work is Fedora-side, where `uparse.py` and the pack pipeline live.
+
+**Before building it:**
+1. Settle the index mapping (§13).
+2. Commit `uparse.py` — the build currently depends on a file that exists on
+   exactly one machine.
+
+**Afterwards**, in priority order: the VT tile byte-patch (§5.6 — 20 glyphs,
+pure pak, no install burden) is probably a better investment than the shim
+(§12 — 52 glyphs, but needs research plus UE4SS on every client and the server).
