@@ -47,7 +47,19 @@ Labels are data-driven:
 - Engraving: an atlas was cooked at 2048x1024 but laid out as **16 columns left-aligned**. Deployed on Fedora it mis-matched the material's horizontal sampling and garbled EVERY sign. **The world has been restored to golden.** Whether the material addresses rows 2-7 ("does the grid grow") is still UNCONFIRMED — every in-world test so far was confounded by the reload/registry jank above (we could not reliably request a non-zero cell).
 
 ## The plan (the pivot + the honest open question)
-**Direction:** stop driving the cell via runtime CPD; bake it into a **static per-index Material Instance** using the `Sign Index Override` parameter. If it works, it fixes BOTH the reload jank AND cell-selection reliability, and stays pure-pak / co-op-clean.
+> **2026-08-04, after the first real in-game tests on Windows: this direction is
+> superseded. See `docs/HANDOFF-diagnostic-atlas-and-mi-feasibility-2026-08-04.md`
+> Part 4.** Measured in game: swapping in a differently-sized atlas breaks the
+> material's cell math outright (a 2048x1024 atlas puts the WHOLE grid on one
+> sign), so the grid does NOT grow and Route X as written is dead. The better
+> lever: each label DataAsset names its OWN MaterialInstance, so we can point our
+> labels at our own material and skip the vanilla atlas entirely. That is gated
+> on one unresolved question -- shipping custom material shaders in a library the
+> game actually opens (`ShaderArchive-R5-*`, not our project's name). Also note
+> Part 4 CORRECTION 2: a flat white sign is UE's default-material fallback, and
+> `%LOCALAPPDATA%\R5\Saved\Logs\R5.log` must be read after every in-game test.
+
+**Direction (SUPERSEDED, kept for context):** stop driving the cell via runtime CPD; bake it into a **static per-index Material Instance** using the `Sign Index Override` parameter. If it works, it fixes BOTH the reload jank AND cell-selection reliability, and stays pure-pak / co-op-clean.
 
 **OPEN FEASIBILITY QUESTION — resolve FIRST, do not assume.** Authoring a Material Instance needs its PARENT material `M_DD_PlaqueSign` in the editor. We only have it COOKED (stripped); the blank `WindroseIcons` project does NOT have the material source. Before building anything, determine whether an MI of `M_DD_PlaqueSign` can be authored at all:
 1. Test whether the editor can load/reference the cooked `M_DD_PlaqueSign` as an MI parent (import the extracted cooked material; likely fails — confirm and record).

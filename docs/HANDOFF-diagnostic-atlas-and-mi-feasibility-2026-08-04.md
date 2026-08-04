@@ -521,3 +521,166 @@ the machines do not diverge: **Windows may test only in throwaway local worlds**
 Fedora stays the sole authority on the golden world and anything that reaches
 the Steam Deck host. Whoever runs a test should record it here so both sides
 know what has actually been verified and where.
+
+---
+
+## Part 4 -- in-game testing on Windows, and a route change
+
+Windrose now runs on the Windows box, so this part is the first time this
+project has had extract -> cook -> pack -> deploy -> **look at it** in one loop.
+Several earlier conclusions did not survive contact with the game. Corrections
+are called out explicitly; do not carry the old ones forward.
+
+### What was actually tested, and what each result was
+
+| # | Deployed | Result in game |
+|---|---|---|
+| 1 | diagnostic atlas, 1280x256 non-VT (vanilla's shape) | **every sign blank** |
+| 2 | control: no mod at all | vanilla icons return -- so #1 was caused by our pak |
+| 3 | diagnostic atlas, 2048x1024 VT | **the ENTIRE atlas grid crammed onto one sign** |
+| 4 | our own material, overriding `MI_DD_PlaqueSign_01` | flat white square |
+| 5 | same, with a real glyph + carved look | flat white square (identical) |
+
+### Result #3 is the important one: the cell math does not adapt
+
+At 2048x1024 a single sign displays the **whole** 16x8 grid at UV 0..1, rather
+than one cell. So `M_DD_PlaqueSign`'s cell selection is tied to the vanilla
+atlas's dimensions -- feed it a different size and the mapping collapses.
+
+Combined with vanilla being 1280x256 (10x2, 20 cells), **"does the grid grow to
+rows 2-7" is answered: no, not by swapping in a bigger atlas.** Route X as
+written -- a taller atlas carrying 52 custom cells -- does not work.
+
+Caveat kept deliberately: #1 and #3 changed *size* and *VT-ness* together, so
+those two variables are still entangled. A 2048x1024 **non-VT** build was cooked
+to break the tie but never got tested. It is staged and ready if anyone wants to
+close that loop.
+
+### CORRECTION 1: "vanilla is near-certainly NOT a virtual texture" -- withdraw this
+
+Part 3 argued this from UE 5.6.1 refusing VT below power-of-two. The in-game
+evidence points the other way: a non-VT override blanked every sign (#1) while a
+VT override at least sampled (#3), which is what you would expect if the
+material reads through a VT sampler. Vanilla's `.ubulk` also refuses to decode
+as a plain BC1 mip chain, consistent with VT tile data.
+
+**Status: genuinely unresolved.** The power-of-two rule is a fact about *our*
+stock editor and does not constrain what the fork shipped. Do not plan around
+either answer until it is measured directly.
+
+### CORRECTION 2: "net-new materials render in the fork" -- WRONG, and here is the real story
+
+When our own material was deployed, every sign changed from vanilla icons to a
+flat white square. That was read as "our material is rendering". It is not --
+**a flat featureless white quad is UE's default-material fallback.** The game log
+says so outright:
+
+```
+LogShaders: Error: Missing shader resource for hash '1481A3C53A85A8EA8FABDC7245920511A2DDE356'
+  for shader platform 'PCD3D_SM6' in the shader library while serializing asset M_WRL_PlaqueEngraving
+LogMaterial: Warning: Invalid shader map ID caching shaders for 'M_WRL_PlaqueEngraving',
+  will use default material.
+LogMaterial: Can't compile M_WRL_PlaqueEngraving with cooked content, will use default material instead
+LogMaterial: Warning: Failed to compile Material for platform PCD3D_SM6, Default Material
+  will be used in game.
+```
+
+**The lesson worth keeping: READ `%LOCALAPPDATA%\R5\Saved\Logs\R5.log` AFTER
+EVERY IN-GAME TEST.** It names the failing asset and the reason. Two rounds of
+testing were spent judging by eye when the answer was sitting in the log.
+
+### The real blocker for custom materials: the shader library name
+
+Our material's package loads fine (`NumPackages=3` mounted, no load errors) --
+only its **shaders** are missing. Cooked shaders live in
+`ShaderArchive-<ProjectName>-<Platform>.ushaderbytecode`, and the game only
+opens the library named after **its own** project, `R5`. Our cook project was
+named `WindroseIcons`, so it shipped `ShaderArchive-WindroseIcons-*`, which
+nothing ever opens.
+
+**This also explains why the menu-icon channel worked all along: textures carry
+no shaders.** The "net-new packages work if you cook them for real" rule is true
+for textures and does NOT extend to materials without solving this.
+
+**Attempted fix, cooked and packed but NOT YET TESTED:** cook from a project
+literally named `R5` (`C:\R5Cook\R5.uproject`, a copy of the WindroseIcons
+project). That produces `ShaderArchive-R5-PCD3D_SM6-PCD3D_SM6.ushaderbytecode`,
+matching what the game opens, and drops the pak from 107 MB to 15 MB by shipping
+only the R5 archives (not the engine Global ones, which would collide).
+
+Pak built and verified at
+`~/workspaces/windrose-signs/WindroseResourceLabels_OwnMaterialR5_P.*`.
+**Unknown whether the game merges a same-named shader library from a mod
+container with its own.** That is the next thing to find out, and the log will
+say plainly.
+
+### THE FIND: each label DataAsset names its own MaterialInstance
+
+Extracted `DA_BI_Utilities_Lables_Wooden_Ore` and dumped its import table:
+
+```
+/Game/Environment/Shaders/InstanceMaterials/Decal/PlaqueSign/MI_DD_PlaqueSign_01   <- the MI
+/Game/Environment/Gameplay/Building/BuildingDecoration/SM_WallPlaqueT02_02         <- board mesh
+/Engine/BasicShapes/Plane                                                          <- engraving plane
+/Game/UI/HUD/Building/Icons/BuildingBits/T_PlaqueT02_Ore                           <- menu icon
+/Game/Gameplay/Building/Actors/BP_BuildingBlock_WallPlaqueT02_02
+```
+
+**The material instance is a per-DataAsset reference.** So labels do not have to
+share the vanilla MI. Point each of our 52 DataAssets at its own MI, parented to
+our own material, and the atlas stops mattering entirely:
+
+| Old blocker | Under the own-material design |
+|---|---|
+| atlas capped at 20 cells | gone -- our textures, our sampler |
+| MI-on-cooked-parent crashes the cooker | gone -- we own the parent |
+| CPD04 written only by native C++ | gone -- glyph baked per MI |
+| reload jank | should be gone -- no runtime CPD dependency |
+| atlas dimensions load-bearing | irrelevant -- no atlas |
+
+Design becomes: **one material with a texture parameter, 52 MIs each holding its
+own glyph, 52 DataAssets each naming its MI.** No atlas, no cell index, no UV
+math. Still pure-pak, so co-op/dedicated-server stays clean.
+
+**Gated entirely on the shader-library question above.** If custom material
+shaders cannot be shipped, this design dies and the mod is confined to the
+game's own material and its 20 cells.
+
+### All 10 vanilla labels mapped
+
+From each DataAsset's `.uexp` localisation key (`Building_Lable_<n>`):
+
+| idx | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| label | CookedFood | FoodIngridients | Clothing | Weapons | Alchemy | **Ore** | Wood | Ship | Treasure | Trade |
+
+Ore = 6 confirms `CLAUDE.md`. All ten share `MI_DD_PlaqueSign_01`; the board
+mesh rotates through `SM_WallPlaqueT02_01/02/03`. Ten labels against 20 atlas
+cells means roughly ten cells are unused -- the only free capacity available if
+we are stuck with the vanilla material.
+
+### Testing hazard, recorded
+
+Mid-session the game reported **"Looks like parts of your save files are
+broken"** -- one player record failed to load; it self-repaired from its own
+backup after confirming and restarting. A texture/material pak has no write path
+to save data, so the mod content is an unlikely cause; the plausible candidates
+are the rapid launch/quit cycling, or Steam Cloud reconciling the same world
+across the Fedora and Windows installs.
+
+**Rules going forward:**
+- Test in a **throwaway world**, never the golden one, on either machine.
+- Consider disabling Steam Cloud for Windrose while two machines share saves.
+- Take a save snapshot before a test session that will involve several restarts.
+
+### Windows-side state
+
+- `~mods` is **empty** -- the game is clean vanilla.
+- Cook projects: `C:\WindroseIcons` (original) and `C:\R5Cook` (copy named `R5`,
+  for shader-library-name correctness). Prefer `R5Cook` for anything involving
+  materials.
+- Built paks parked in `~/workspaces/windrose-signs/` (not committed):
+  `..._EngravingDiagVanilla_P` (1280 non-VT), `..._EngravingDiagBig_P` (2048 VT),
+  `..._OwnMaterialR5_P` (own material, R5-named shader lib, untested).
+- Extracted game assets: `~/workspaces/windrose-signs/extracted/` (not committed).
+- retoc: `~/workspaces/tools/retoc/retoc.exe`.
