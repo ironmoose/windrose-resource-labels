@@ -57,20 +57,29 @@ If none work, the MI pivot is blocked and we reconsider (register-without-crash,
 
 **Step 1 — validate the override mechanism (once feasibility is resolved).** Cook an MI of `M_DD_PlaqueSign` with `Sign Index Override` = 6 (Ore's normal cell), overriding the shared `MI_DD_PlaqueSign_01` in place at package path `/Game/Environment/Shaders/InstanceMaterials/Decal/PlaqueSign/MI_DD_PlaqueSign_01`. Fedora deploys it against the VANILLA atlas (no atlas override). If EVERY sign shows the Ore glyph (cell 6) AND it survives save/reload → the static-override path works and persists. Also answer in-editor: does the override engage automatically when set, or need a companion enable switch? Does index 0 need special handling? Does `MF_IndexedPaletteUVOffset` consume the overridden value?
 
-UE Python sketch (verify exact method names against the editor's Python reference; STOP + record if any differ):
+UE Python sketch — **corrected against UE 5.6.1 on 2026-08-04**; the original
+`factory.set_editor_property("initial_parent", ...)` form does NOT run (that
+property is not exposed to Python). See `docs/HANDOFF-diagnostic-atlas-and-mi-feasibility-2026-08-04.md`:
 ```python
 import unreal
-atools  = unreal.AssetToolsHelpers.get_asset_tools()
-factory = unreal.MaterialInstanceConstantFactoryNew()
-parent  = unreal.load_asset("/Game/Environment/Shaders/Decal/M_DD_PlaqueSign")
-factory.set_editor_property("initial_parent", parent)
+atools = unreal.AssetToolsHelpers.get_asset_tools()
+parent = unreal.load_asset("/Game/Environment/Shaders/Decal/M_DD_PlaqueSign")
+# create first, THEN parent -- MaterialInstanceConstantFactoryNew.InitialParent is
+# a bare UPROPERTY() and set_editor_property("initial_parent", ...) raises.
 mi = atools.create_asset("MI_DD_PlaqueSign_01",
                          "/Game/Environment/Shaders/InstanceMaterials/Decal/PlaqueSign",
-                         unreal.MaterialInstanceConstant, factory)
+                         unreal.MaterialInstanceConstant,
+                         unreal.MaterialInstanceConstantFactoryNew())
+unreal.MaterialEditingLibrary.set_material_instance_parent(mi, parent)
 unreal.MaterialEditingLibrary.set_material_instance_scalar_parameter_value(mi, "Sign Index Override", 6.0)
 unreal.MaterialEditingLibrary.update_material_instance(mi)
 unreal.EditorAssetLibrary.save_asset("/Game/Environment/Shaders/InstanceMaterials/Decal/PlaqueSign/MI_DD_PlaqueSign_01")
 ```
+`set_material_instance_scalar_parameter_value` returns **False even on success** —
+read the value back instead of trusting its return. And a MI parented to an
+*extracted cooked* material authors fine but **crashes the cooker**
+(`MaterialCachedData.cpp:766`); use a **stub parent** instead — same package path,
+same parameter names, ship only the MI. Full evidence in the 2026-08-04 handoff.
 
 **Step 2 — measure the real atlas geometry + row-growth (EMPIRICAL; static analysis is exhausted).** Cook a NUMBERED diagnostic atlas (each cell shows its own index) as a plain texture override — the known-good pipeline, feasible right now with no MI dependency. Fedora deploys it; the user places vanilla signs (known indices 0-10). Reading which number each vanilla sign shows MEASURES the true column count and reveals exactly how the 16-column cook mis-mapped. Add a `Sign Index Override` MI requesting a high cell (e.g. 70) to see whether rows 2-7 are addressable. **If the Step-1 feasibility question stalls, do this diagnostic cook first** — it resolves the gating geometry question regardless of the MI outcome.
 
