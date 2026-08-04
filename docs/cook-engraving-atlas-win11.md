@@ -1,5 +1,23 @@
 # Cooking the engraving-atlas as a NATIVE virtual texture in UE5.6 on Windows 11
 
+> **⚠️ CORRECTION (2026-08-03) -- DO NOT follow the 1280-wide method below
+> verbatim. Read
+> [`HANDOFF-cook-engraving-atlas-2026-08-03.md`](HANDOFF-cook-engraving-atlas-2026-08-03.md)
+> FIRST.** This guide's central premise -- that a 1280x1024 source is
+> VT-eligible with Power Of Two Mode = None because 1280 is a multiple of the
+> 128 tile size -- is **false on UE 5.6.1**. The engine requires **power-of-two
+> dimensions** for virtual textures; at 1280 wide, `virtual_texture_streaming`
+> silently reverts to OFF (`... texture size is not a power-of-2`) and the cook
+> produces a non-VT asset with no `.ubulk`. **Proven fix:** author/re-tile the
+> atlas onto a true power-of-two **2048x1024** canvas (16 cells wide x 8 rows,
+> mode `L`), then follow this guide's Step-2 property table (POT still = None,
+> which now sticks) and Steps 3-5. The index numbering stays 10-wide; only the
+> material's horizontal UV cell-size changes 1/10 -> 1/16. Full method,
+> verification, and material reconciliation are in the handoff above. Everything
+> below is correct EXCEPT the source dimensions (use 2048x1024, not 1280x1024)
+> and Step 5's "SizeX must be 1280, not 2048" check (it is inverted -- the
+> correct native width IS 2048).
+
 This is a **paint-by-numbers guide** for cooking `T_PlaqueSign_01_M` as an
 **in-place, unpadded virtual-texture override**. It assumes **zero memory of
 this project** -- follow every step literally, in order, and do not infer or
