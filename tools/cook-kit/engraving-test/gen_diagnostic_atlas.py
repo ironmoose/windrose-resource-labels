@@ -18,15 +18,35 @@ Per-cell content:
   - a solid square in the cell's TOP-LEFT corner -> makes a vertically flipped
     (or rotated) UV read obvious at a glance.
 
-Output: SourceIcons/T_PlaqueSign_01_M_diag.png next to the other atlas sources.
+Two variants (pass the name as argv[1], default "big"):
+
+  vanilla : 1280x256, 10 cols x 2 rows -- EXACTLY the vanilla atlas geometry,
+            measured off the extracted cooked T_PlaqueSign_01_M (1280x256,
+            PF_DXT1). Deploy this FIRST: it changes only the pixels, not the
+            shape, so it isolates "does a texture override read correctly at
+            all, and what index maps to what cell" from "can the grid grow".
+  big     : 2048x1024, 16 cols x 8 rows -- the power-of-two VT shape. Only
+            meaningful once the vanilla-shaped one has established the mapping.
+
+Output: T_PlaqueSign_01_M_diag[_vanilla].png next to this script.
 """
 
 from PIL import Image, ImageDraw, ImageFont
 import os
+import sys
+
+VARIANTS = {
+    "big":     {"cols": 16, "rows": 8, "suffix": ""},
+    "vanilla": {"cols": 10, "rows": 2, "suffix": "_vanilla"},
+}
+
+VARIANT = sys.argv[1] if len(sys.argv) > 1 else "big"
+if VARIANT not in VARIANTS:
+    raise SystemExit("variant must be one of %s" % list(VARIANTS))
 
 CELL = 128
-COLS = 16
-ROWS = 8
+COLS = VARIANTS[VARIANT]["cols"]
+ROWS = VARIANTS[VARIANT]["rows"]
 W, H = CELL * COLS, CELL * ROWS
 
 WHITE = 255
@@ -39,7 +59,8 @@ FONT_CANDIDATES = [
     r"C:\Windows\Fonts\arial.ttf",
 ]
 
-OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "T_PlaqueSign_01_M_diag.png")
+OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                   "T_PlaqueSign_01_M_diag%s.png" % VARIANTS[VARIANT]["suffix"])
 
 
 def load_font(size):

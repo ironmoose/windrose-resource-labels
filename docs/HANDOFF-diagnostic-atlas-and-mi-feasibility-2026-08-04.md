@@ -1,5 +1,14 @@
 # Handoff: numbered diagnostic atlas + MI-parent feasibility (Windows side) -- 2026-08-04
 
+> **UPDATE, same day, after Windrose was installed on the Windows box.** The
+> `[STOP]` items below about unverified paths and parameter names are now
+> **resolved from the real extracted assets** -- and the extraction turned up
+> something that reframes the whole engraving problem: **the vanilla atlas is
+> 1280x256, i.e. 10 columns x 2 rows = 20 cells.** See
+> "**Part 3 -- what the real assets say**" at the bottom. Read Part 3 before
+> acting on Part 1's deploy instructions; there is now a second, better-targeted
+> atlas to deploy first.
+
 Answers **both** open items in `CLAUDE.md` "The plan":
 
 - **Step 2 (numbered diagnostic atlas): COOKED, verified, ready to deploy.**
@@ -8,10 +17,11 @@ Answers **both** open items in `CLAUDE.md` "The plan":
   editor but **crashes the cooker**. A stub-parent MI cooks cleanly and carries
   the override. Details in "Feasibility" below.
 
-Windrose is **not installed on this Windows box** (the old `D:\SteamLibrary` is
-gone -- that disk is Fedora now), so nothing here was tested against the real
-`M_DD_PlaqueSign`. Everything below is stock-UE-5.6.1 behaviour reproduced with
-a locally cooked stand-in material. See `[STOP]` items.
+Parts 1 and 2 were written while Windrose was **not** installed on this Windows
+box, so nothing in them was tested against the real `M_DD_PlaqueSign` -- they are
+stock-UE-5.6.1 behaviour reproduced with a locally cooked stand-in material.
+The game was installed later the same day; **Part 3 supersedes the `[STOP]`
+items** and adds measurements from the real assets.
 
 ---
 
@@ -307,3 +317,207 @@ empty one.
 - **Committed to the repo:** `tools/cook-kit/engraving-test/gen_diagnostic_atlas.py`
   and `tools/cook-kit/engraving-test/T_PlaqueSign_01_M_diag.png` (source art, not
   a binary build product), plus this handoff.
+
+---
+
+## Part 3 -- what the REAL assets say (added after installing Windrose on Windows)
+
+Windrose is now installed on the Windows box at
+`C:\Program Files (x86)\Steam\steamapps\common\Windrose`, and retoc runs here
+too (`~/workspaces/tools/retoc/retoc.exe`, v0.1.5, official prebuilt Windows
+binary, sha256 verified). Extraction scratch, **not committed**:
+`~/workspaces/windrose-signs/extracted/`.
+
+Extraction command that worked (the `-f` filter avoids converting the whole
+524 MB container):
+
+```
+retoc.exe to-legacy -f PlaqueSign "<game>/R5/Content/Paks" <out>
+```
+
+Note: `retoc list` is useless on these containers -- the directory index carries
+**chunk IDs only, no filenames**. `to-legacy` is what reconstructs real package
+paths.
+
+### THE BIG ONE: the vanilla atlas is 1280x256 -- 10 cols x 2 rows, 20 cells
+
+Read straight out of the extracted cooked `T_PlaqueSign_01_M.uexp`
+(`FTexturePlatformData`: `SizeX=1280, SizeY=256, PF_DXT1`). At 128px cells that
+is **10 columns x 2 rows = 20 cells total**.
+
+This confirms the `1280x256` figure the cook guide asserted, and it kills the
+guide's internally inconsistent "28 tiles at a 10x2 grid" (10x2 = 20).
+
+**Why this reframes everything.** We have been overriding a **1280x256, 10x2**
+texture with a **2048x1024, 16x8** one. That changes the width, the height, the
+aspect ratio, the row count *and* the streaming mode all at once -- and then the
+deployment garbled every sign. The prior handoff attributed the garbling to a
+10-vs-16 **column** mismatch, but the vertical is a bigger change: vanilla has
+**2** rows and we shipped **8**. If the material's cell size is a fixed fraction
+(1/10 wide, 1/2 tall) rather than derived from the bound texture's real
+dimensions, then a 2048x1024 atlas makes every "cell" sample a 204.8 x 512 px
+slab -- total garble, exactly as observed.
+
+**Consequence for the plan:** "does the grid grow to rows 2-7" is not a
+side-question, it is *the* question. Vanilla has no rows 2-7 at all. All 52
+production indices (20..71) live in rows that do not exist in the vanilla atlas.
+
+### Is vanilla a virtual texture? Strong evidence for NO, not proven
+
+The prior handoff left this open ("the guide asserts vanilla is a 1280x256
+native unpadded VT; that cannot be reconciled with 5.6.1 refusing a 1280-wide
+VT"). Two independent signals now point the same way:
+
+1. **UE 5.6.1 refuses VT at 1280 wide.** Importing the vanilla-shaped source
+   this session produced, verbatim:
+   `LogTexture: Warning: VirtualTextureStreaming not supported for
+   "T_PlaqueSign_01_M", texture size is not a power-of-2`.
+   Vanilla is 1280 wide. R5 is a UE 5.6.1 fork. So vanilla almost certainly is
+   **not** a VT.
+2. The `bIsVirtual` field parses as `0` on the vanilla asset.
+
+**But do not treat signal 2 as proof, and I am flagging why:** the engine
+serializes a *different set of fields* in the VT and non-VT branches
+(`TextureDerivedData.cpp`, `SerializePlatformData`), so fixed byte offsets are
+not valid across both. As a control I ran the same parse over **our own** cooked
+2048 atlas -- which the 2026-08-03 cook log reported as `TFO_AutoDXT VT` -- and
+it *also* read `bIsVirtual=0`. Either that control is not really a VT, or the
+parse is reading a shifted slot. I could not tell which from bytes alone, and
+this project has already been burned once by byte math, so I stopped there
+rather than assert. Signal 1 stands on its own regardless.
+
+**If vanilla is not a VT, the entire 2048 power-of-two VT pivot was solving a
+problem vanilla does not have** -- it converted a plain streamed texture into a
+virtual one as a side effect of chasing power-of-two.
+
+### Exact strings off the real assets -- `[STOP]` 3 and 4 CLOSED
+
+Package paths (confirmed, `CLAUDE.md`'s sketch was right):
+
+```
+/Game/Environment/Shaders/Decal/M_DD_PlaqueSign
+/Game/Environment/Shaders/InstanceMaterials/Decal/PlaqueSign/MI_DD_PlaqueSign_01
+/Game/Environment/Shaders/Textures/Trim/Building/T_PlaqueSign_01_M
+```
+
+**Full parameter list on `M_DD_PlaqueSign`** (from its name table -- a stub must
+match these spellings exactly):
+
+```
+[CPD04] Sign Index          <- the CPD-driven index, confirms the CPD04 mechanism
+Sign Index Override         <- CONFIRMED, exactly as CLAUDE.md guessed
+Main Color                  Opacity
+Outline Color               Outline Offset
+Outline Width               Roughness
+Shadow Intensity            Sticker Offset
+Use WPO MeshSticker         Warp Intensity
+```
+
+`Sign Index Override` also appears in the material's **shader map** numeric
+parameter list, so it is a genuine uniform scalar an MI can drive. (`[CPD04]
+Sign Index`, `Sticker Offset` and `Use WPO MeshSticker` are absent from that
+list -- consistent with CPD-fed / static-switch parameters.)
+
+Material function imports confirmed: `MF_CPDOverride`, `MF_UDIMIndexSelect`,
+`MF_IndexedPaletteUVOffset`, plus `MF_MeshSticker`, `MF_UnpackCRVAtlas`.
+
+**The vanilla shared MI overrides NOTHING.** `MI_DD_PlaqueSign_01` is a 995-byte
+`.uasset` + a **65-byte** `.uexp` with no `ScalarParameterValues` entry at all --
+it only names its parent. Every sign really is the same material instance, with
+CPD04 as the only per-sign difference, exactly as `CLAUDE.md` describes.
+
+### Static analysis really is exhausted -- confirmed
+
+All three UV/CPD material functions extract to a **25-byte `.uexp`**: the graphs
+are fully stripped. There is nothing left to read. The grid math can only be
+measured in-game.
+
+### `[STOP]` 5 CLOSED, and worse than expected: fork-cooked packages will NOT load
+
+I dropped the real extracted assets into the editor project at their true
+package paths and tried to load them. Two gates, in order:
+
+1. `Package was saved unversioned and the current process does not support
+   loading unversioned packages.` -> shipping cooks are unversioned; the fix is
+   a **second** CVar, `s.AllowUnversionedContentInEditor 1`, alongside
+   `cook.AllowCookedDataInEditorBuilds 1`.
+2. With both gates open the editor gets further into the linker and then
+   **hard-crashes**:
+   `Assertion failed: Index.IsImport() && ImportMap.IsValidIndex(Index.ToImport())`
+   `[File: ...CoreUObject\Public\UObject\Linker.h] [Line: 139]`
+
+So the real R5 fork-cooked packages **cannot be loaded in a stock UE 5.6.1
+editor at all**, with or without the gates. That means:
+
+- Introspecting the real material in-editor is off the table. Everything above
+  came from reading the raw file bytes instead, which worked fine.
+- **The stub-parent route is not merely preferable, it is mandatory.** There is
+  no path where we author against the real material object.
+- The good news: a stub only needs the **package path** and the **parameter
+  names**, and both are now known exactly.
+
+### New deliverable: a VANILLA-SHAPED diagnostic atlas (deploy this one FIRST)
+
+Cooked this session, `Success - 0 error(s), 0 warning(s)`:
+
+```
+C:\WindroseIcons\Saved\_handoff_2026-08-04\diag_vanilla_1280x256\T_PlaqueSign_01_M.uasset   (1459 bytes)
+C:\WindroseIcons\Saved\_handoff_2026-08-04\diag_vanilla_1280x256\T_PlaqueSign_01_M.uexp     (218949 bytes)
+```
+
+**No `.ubulk`** -- non-VT, pixel data inline in the `.uexp`. That is expected and
+correct for this shape.
+
+1280x256, 10 cols x 2 rows, mode `L`, VT explicitly OFF, POT=None, sRGB off,
+TC_Default -- i.e. **vanilla's geometry, changing only the pixels**. Same cell
+labelling as the big one (`<colHex><row>`, column first, border + top-left corner
+marker), so cell `60` is column 6 row 0.
+
+Generated by the same committed generator, now with a variant argument:
+
+```
+python tools/cook-kit/engraving-test/gen_diagnostic_atlas.py vanilla   # 1280x256, 10x2
+python tools/cook-kit/engraving-test/gen_diagnostic_atlas.py big       # 2048x1024, 16x8
+```
+
+**Why deploy this one first.** It isolates one variable. Every previous test
+changed the atlas shape *and* the pixels at once, so a garbled result could
+never distinguish "our override does not work" from "the grid cannot grow". With
+a vanilla-shaped override:
+
+- **Signs show clean single numbers** -> texture overrides work, and each sign's
+  glyphs give you its exact (col,row). That nails the index->cell mapping with
+  certainty, and *then* the big 16x8 atlas becomes a clean test of row growth
+  alone.
+- **Signs garble even at vanilla geometry** -> the problem was never the grid;
+  something about our cook differs from vanilla (streaming layout, compression,
+  mip setup) and that is what to chase.
+
+Both atlases are staged side by side for pickup:
+
+```
+C:\WindroseIcons\Saved\_handoff_2026-08-04\diag_vanilla_1280x256\   <- deploy first
+C:\WindroseIcons\Saved\_handoff_2026-08-04\diag_big_2048x1024\      <- deploy second
+```
+
+### Revised next steps
+
+1. Deploy **`diag_vanilla_1280x256`**, local client only. Have the user read the
+   literal glyphs off signs of known index. That is the single highest-value
+   measurement available and it is now un-confounded.
+2. Then deploy **`diag_big_2048x1024`** to test row growth specifically.
+3. Only then build the stub + per-index MIs, at the geometry those two tests
+   establish -- with the parameter names and paths now confirmed above.
+4. Reconsider the power-of-two/VT pivot in light of vanilla being 1280-wide and
+   near-certainly non-VT. A vanilla-shaped 10x2 override needs no VT at all.
+   If the grid cannot grow, 20 cells is the hard ceiling and V1 needs a
+   different mechanism, not a bigger atlas.
+
+### Note on the two-machine split
+
+Windows can now extract, cook **and** run the game, so it can do in-game tests
+that `CLAUDE.md` currently assigns exclusively to Fedora. Suggested boundary so
+the machines do not diverge: **Windows may test only in throwaway local worlds**;
+Fedora stays the sole authority on the golden world and anything that reaches
+the Steam Deck host. Whoever runs a test should record it here so both sides
+know what has actually been verified and where.
