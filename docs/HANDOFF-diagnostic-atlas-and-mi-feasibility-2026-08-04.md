@@ -668,10 +668,18 @@ to save data, so the mod content is an unlikely cause; the plausible candidates
 are the rapid launch/quit cycling, or Steam Cloud reconciling the same world
 across the Fedora and Windows installs.
 
-**Rules going forward:**
-- Test in a **throwaway world**, never the golden one, on either machine.
-- Consider disabling Steam Cloud for Windrose while two machines share saves.
-- Take a save snapshot before a test session that will involve several restarts.
+**Rules going forward (corrected 2026-08-04 by the user):**
+- **`The Siblings Stu` on the Windows box is the RIGHT place to test, not a
+  hazard.** It is an old single-player copy; the live co-op world lives on a
+  separate dedicated server. It is the best test bed available because it
+  already has **many vanilla signs placed**, so a texture/material change can be
+  read off a dozen existing signs without building anything. An earlier version
+  of this note told the next session to avoid it -- that was wrong and would
+  have thrown away the most useful world we have.
+- The live dedicated-server world is a different matter: nothing goes there
+  until a change is verified locally first.
+- The save wobble above self-repaired from the game's own backup and did not
+  recur. Worth knowing about, not worth avoiding testing over.
 
 ### Windows-side state
 
