@@ -6,7 +6,9 @@ Cold-start orientation for a fresh Claude working this repo (especially the **Wi
 A community mod for **Windrose** (co-op pirate survival, Unreal Engine 5.6.1, a custom "R5" engine fork by Kraken Express; Steam app 3041230, dedicated server app 4129620). It adds per-resource "label" plaque signs so players sort storage by exact resource. Vanilla ships only 10 fixed category labels. Target: 52 per-resource labels, wooden variants only. Public repo: github.com/ironmoose/windrose-resource-labels.
 
 **Prime directives**
-- Ship as a pure UE5 IoStore **pak** mod (drop into `~mods`). **No UE4SS** — it breaks dedicated-server/co-op cleanliness. UE4SS is last-resort only.
+- **UE4SS IS NOW APPROVED — decided by the user 2026-08-04. Do NOT re-litigate this.** Pak-only was proven insufficient that day: UE opens shader libraries at **startup**, before mod paks mount, so a pak can never ship a working custom material without code. Without custom materials the in-world engraving is stuck on the game's `M_DD_PlaqueSign` and its **20-cell** atlas — the 52-label target is unreachable pure-pak. Full reasoning in `docs/HANDOFF-diagnostic-atlas-and-mi-feasibility-2026-08-04.md` Part 5.
+- **Architecture: keep everything possible IN THE PAK; UE4SS is a thin shim.** The intended UE4SS job is narrow — call `FShaderCodeLibrary::OpenLibrary` on our shader library at startup so our pak-shipped material, MIs and textures load normally. Do not drift into a big C++ mod; every extra native behaviour is a maintenance liability across game patches. (Contrast `Windrose Text Signs`, which needed a whole socket + UPnP network bridge because it syncs player-typed text. We need none of that — which label a sign is, is already vanilla replicated data. We only change the visual.)
+- UE4SS must be installed on **each client AND the dedicated server host**. The user controls their own server, so this is acceptable; it does raise the install burden for any public release.
 - **Never rename an in-place override package** — it must match the vanilla package path exactly or it overrides nothing.
 - The user (ironmoose) is a **first-time modder and the visual judge**. Never declare an in-world result "done" — the user eyeballs it. Docs assume zero mod knowledge.
 - **If a step is ambiguous, or a setting/asset is not as described: STOP and record it in a handoff note. Do NOT guess.** Guessing has already produced two bad cooks this project.
@@ -46,7 +48,15 @@ Labels are data-driven:
 - Menu icons: done + user-verified (IronOre); 52-icon batch pipeline ready.
 - Engraving: an atlas was cooked at 2048x1024 but laid out as **16 columns left-aligned**. Deployed on Fedora it mis-matched the material's horizontal sampling and garbled EVERY sign. **The world has been restored to golden.** Whether the material addresses rows 2-7 ("does the grid grow") is still UNCONFIRMED — every in-world test so far was confounded by the reload/registry jank above (we could not reliably request a non-zero cell).
 
-## The plan (the pivot + the honest open question)
+## The plan — UE4SS shim + pak content (decided 2026-08-04)
+
+**Route:** a minimal UE4SS mod that opens our shader library at startup; everything else (our own decal material, 52 MaterialInstances each holding its own glyph texture, 52 patched DataAssets each naming its MI) ships in the pak using the cook pipeline that already works. This reaches the full 52, and drops the vanilla atlas, the 20-cell cap, the CPD04 dependency and the reload jank all at once, because we stop borrowing `M_DD_PlaqueSign`.
+
+**Prove this first, before building anything else:** a UE4SS mod that does nothing but call `FShaderCodeLibrary::OpenLibrary` for our library and log the outcome. `OpenLibrary` is a static engine function, not a UObject, so it needs its address found by signature scan — that is the one genuinely unproven step. If our material renders after the shim, the rest is work already done on 2026-08-04. If it does not, fall back to the 20-cell plan (per-label MIs parented to the game's material with differing `Sign Index Override`) knowing exactly why.
+
+**Already built and reusable:** cook project `C:\R5Cook` (named `R5` so shader archives match), `M_WRL_PlaqueEngraving` (decal material with a `SignTexture` parameter), a glyph-extraction script that pulls clean silhouettes from the 52 menu icons, and the retoc pack/deploy loop on Windows.
+
+## The OLD plan (superseded — kept only so it is not re-attempted)
 > **2026-08-04, after the first real in-game tests on Windows: this direction is
 > superseded. See `docs/HANDOFF-diagnostic-atlas-and-mi-feasibility-2026-08-04.md`
 > Part 4.** Measured in game: swapping in a differently-sized atlas breaks the
