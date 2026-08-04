@@ -800,3 +800,134 @@ last touched **May 6**. Today's play writes to a different store, `RocksDB_v2`,
 under a different player id. It is a ~3-month-old stale record with a garbled
 name that the game trips over at the character screen and repairs from its own
 backup each time. Confirm and continue; it is not related to the mod.
+
+---
+
+## Part 6 -- UE4SS installed, and the sign mechanism MEASURED in a running game
+
+UE4SS is now installed on the Windows box and was used to interrogate a live
+world (`Siblings Stu`, 70 placed plaque signs). This is the first time this
+project has read runtime state instead of inferring it from cooked bytes, and it
+settled several questions that had been open for weeks -- including two where
+the inferred answer was wrong.
+
+### Installing UE4SS for Windrose (do not rediscover)
+
+- Upstream `UE4SS_v3.0.1.zip` (dwmapi.dll proxy + UE4SS.dll) into
+  `R5\Binaries\Win64\`, then **overlay the Windrose community package**
+  (Thunderstore `Thunderstore-Windrose_UE4SS`) on top of it.
+- **UE4SS auto-detection FAILS on UE 5.6** -- it aborts with
+  `Failed to find EngineVersion`. The community `UE4SS-settings.ini` fixes it:
+  `[EngineVersionOverride] MajorVersion = 5 / MinorVersion = 6`,
+  `[Hooks] FExecVTableOffsetInLocalPlayer = 0x28`, and `GraphicsAPI = dx11`.
+- **The overlay ships `Mods/mods.json`, and UE4SS reads that in preference to
+  `Mods/mods.txt`.** Registering a mod only in `mods.txt` silently does nothing.
+  Belt and braces: also drop an empty `Mods/<ModName>/enabled.txt`.
+- `GuiConsoleEnabled = 1` and `EnableHotReloadSystem = 1` are worth setting --
+  the console is the whole diagnostic value, and hot reload saves a game restart
+  per script edit.
+- Verified working: `GUObjectArray`, `FName::ToString` and
+  `StaticConstructObject_Internal` all resolve; `UE4SS.log` appears in
+  `R5\Binaries\Win64\`.
+
+### THE MECHANISM, measured
+
+**CPD04 drives the engraving, and Lua can write it.**
+`plane:SetCustomPrimitiveDataFloat(4, n)` on the sign's `Plane_GEN_VARIABLE`
+`StaticMeshComponent` changes the carved glyph, live, on all 70 signs (0 failures).
+**Per-sign control therefore needs no C++ at all.**
+
+**Cells 0-9 are the ten vanilla glyphs. Index 10 and up render BLANK.**
+Stepped every sign through indices 0..14 one at a time. Distinct glyphs appear
+for 0-9; from 10 onward the board is blank. That matches the 1280x256 atlas
+exactly: 10 columns x 2 rows, row 0 populated, **row 1 empty but addressable**.
+
+So the long-open "does the grid grow" question is answered twice over:
+- the material *does* address row 1 (it samples it and draws nothing), and
+- there is no row 2-7 to grow into, because the atlas is only 2 rows.
+
+There are **10 free, addressable, empty cells**. They are only usable if the
+atlas itself can be replaced -- see the blocker below.
+
+**CustomPrimitiveData is WRITE-ONLY from Lua.** Reading it back returns
+`0.000` on every sign *even while the correct glyph is rendering*. The live
+value lives somewhere we cannot see (scene proxy / instanced batch).
+**Never "restore" a sign from a read** -- doing exactly that wrote zeros
+everywhere and turned every sign in the world into the drumstick (cell 0).
+The only honest undo is reloading the world; none of this touches the save.
+
+**The atlas IS a virtual texture** -- `VirtualTextureStreaming = true`, read off
+the live `Texture2D`. Part 3's "near-certainly NOT a virtual texture" was wrong
+and is now definitively withdrawn. This also explains Part 4's blank signs: a
+non-VT replacement fed to a VT sampler renders nothing.
+
+**The material has no texture parameters at runtime either** --
+`TextureParameterValues: 0` on `MI_DD_PlaqueSign_01`; the only scalar is
+`RefractionDepthBias`. Confirms the cooked-bytes reading. Per-label atlases are
+impossible through this material.
+
+**`CreateDynamicMaterialInstance` works** on the sign Plane components (70/70).
+
+### Generic vanilla decal materials do NOT work on the sign Plane
+
+The game ships generic decal masters that *do* expose texture parameters --
+`M_DD_AMRO`, `M_DD_AMRON`, `M_DD_AMREON` (`Albedo`, `MTRM`, `Normal`, `Opacity`,
+...). Using one of those via a MID would have meant arbitrary art on signs using
+only vanilla shaders: no custom material, no shader library, no C++.
+
+Tested: MIDs created on all 70 signs, `Albedo` set on all 70, cycling four
+different game textures including **the master's own default**
+`T_R5SampleVT_A`. Result: blank, or a thin line. Even its own default did not
+render.
+
+**Why:** `M_DD_PlaqueSign` is a **mesh-sticker** decal -- its parameter list
+includes `Use WPO MeshSticker` and it imports `MF_MeshSticker`, i.e. it is
+authored to draw onto the mesh it is applied to. The AMRO family are ordinary
+**projected** decals expecting to project from a decal volume onto surrounding
+geometry. On a flat quad they degenerate to a line. Substituting one for the
+other cannot work.
+
+### Where that leaves the routes
+
+| Route | Status |
+|---|---|
+| Bigger/taller atlas (Route X) | **Dead** -- atlas is 2 rows and resizing breaks the cell math |
+| Per-label MIs supplying their own atlas | **Dead** -- no texture parameter |
+| Our own material, pak-only | **Dead** -- shader library opens before mods mount |
+| Vanilla generic decal master + our texture | **Dead** -- mesh-sticker vs projected decal |
+| **UE4SS C++ shim -> `OpenLibrary` -> our own material** | **The only route to 52** |
+| Byte-patch the vanilla atlas's VT tiles in place | **Unvalidated fallback, caps at 20** |
+
+**The C++ shim** remains the one unexcluded path to the full 52. Its job stays
+narrow: call `FShaderCodeLibrary::OpenLibrary` for our shader library at startup
+so our pak-shipped material, MIs and glyph textures load normally. Everything
+else is pak content built with the pipeline that already works.
+
+**The pak-only fallback** would fill atlas cells 10-19 by **byte-patching the
+vanilla cooked texture's VT tile data in place** -- identical dimensions,
+identical VT structure, only pixels changed. That sidesteps the
+non-power-of-two VT problem entirely because the texture is never re-cooked.
+Fiddly (BC1 tiles with borders inside a VT layout), unvalidated, and it caps at
+20 distinct engravings. Worth keeping in reserve.
+
+### Toolchain ready on Windows
+
+- **MSVC 14.44** (VS2022 Build Tools, installed this session)
+- **xmake 3.0.9** at `C:\Program Files\xmake\xmake.exe`
+- **UE4SS source** at `~/workspaces/tools/RE-UE4SS` (34 MB, with `cppmods/`
+  examples and `xmake.lua` to model the shim on)
+- **retoc** at `~/workspaces/tools/retoc/retoc.exe`
+- Probe mod at `R5\Binaries\Win64\Mods\WRLProbe\Scripts\main.lua`
+  (F5 decal test, F7 dump, F8 index stepper, F6 info)
+
+### Process note that cost real time today
+
+**Read `%LOCALAPPDATA%\R5\Saved\Logs\R5.log` after every in-game test.** A flat
+white sign is UE's *default material* fallback, not a rendering success, and the
+log says so in plain language. Two rounds of testing were spent judging by eye
+with the answer sitting in the log.
+
+Second: **validate Lua before asking for a game restart.** A script edit that
+put a literal newline inside a string literal made the whole mod fail to load,
+which read in game as "F8 does nothing" and cost a reload to discover. A quote
+balance check catches it in one command.

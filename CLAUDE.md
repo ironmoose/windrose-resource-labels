@@ -52,6 +52,13 @@ Labels are data-driven:
 
 **Route:** a minimal UE4SS mod that opens our shader library at startup; everything else (our own decal material, 52 MaterialInstances each holding its own glyph texture, 52 patched DataAssets each naming its MI) ships in the pak using the cook pipeline that already works. This reaches the full 52, and drops the vanilla atlas, the 20-cell cap, the CPD04 dependency and the reload jank all at once, because we stop borrowing `M_DD_PlaqueSign`.
 
+**MEASURED IN GAME 2026-08-04 via UE4SS (handoff Part 6) -- read before planning:**
+- **CPD04 drives the engraving and LUA CAN WRITE IT** (`SetCustomPrimitiveDataFloat(4, n)` on the sign's Plane component, 70/70 signs). Per-sign control needs no C++.
+- **Cells 0-9 are the ten vanilla glyphs; index 10+ renders BLANK.** The atlas is 10 cols x 2 rows; row 1 is addressable but empty. There are 10 free cells, usable only if the atlas can be replaced.
+- **CPD is WRITE-ONLY** -- it reads back 0.000 on every sign even while the right glyph renders. Never restore from a read (doing so turned every sign into cell 0).
+- **The atlas IS a virtual texture** (confirmed on the live object). The earlier "not a VT" claim is withdrawn for good.
+- **Generic vanilla decal masters (`M_DD_AMRO/AMRON/AMREON`) will NOT work** on the sign Plane -- `M_DD_PlaqueSign` is a *mesh-sticker* decal (`Use WPO MeshSticker` + `MF_MeshSticker`), they are *projected* decals. Even their own default texture renders blank.
+
 **Prove this first, before building anything else:** a UE4SS mod that does nothing but call `FShaderCodeLibrary::OpenLibrary` for our library and log the outcome. `OpenLibrary` is a static engine function, not a UObject, so it needs its address found by signature scan — that is the one genuinely unproven step. If our material renders after the shim, the rest is work already done on 2026-08-04. If it does not, fall back to the 20-cell plan (per-label MIs parented to the game's material with differing `Sign Index Override`) knowing exactly why.
 
 **Already built and reusable:** cook project `C:\R5Cook` (named `R5` so shader archives match), `M_WRL_PlaqueEngraving` (decal material with a `SignTexture` parameter), a glyph-extraction script that pulls clean silhouettes from the 52 menu icons, and the retoc pack/deploy loop on Windows.
