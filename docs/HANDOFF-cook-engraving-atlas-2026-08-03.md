@@ -21,9 +21,16 @@ updated to match. Read this before packing.
   **stays ON**, and the cook produced a real **`.ubulk`**.
 - **Cook result:** `Success - 0 error(s), 0 warning(s)`; texture built as
   `TFO_AutoDXT VT, 2048x1024`.
-- **Follow-up you must do on Fedora:** the grid is now **16 columns wide, not
-  10**. The material `M_DD_PlaqueSign` (and the atlas generator) must use 16
-  columns / 2048px width. Details in "The one thing to sync" below.
+- **Follow-up you must do on Fedora (read carefully -- it is NOT "just use 16
+  columns"):** the texture is now physically **2048 wide (16 cells)**, but the
+  cells kept their original (row, col), so the **index numbering stays 10-wide**.
+  Only the material's **horizontal UV cell-size** changes (1/10 -> 1/16); the
+  `index -> (row,col)` decode stays **10**. Get this right and the pack guide's
+  pre-built `idx20`/`idx70` test paks still work unchanged. Get it wrong (use 16
+  for the decode too) and they sample the wrong cell and read as a false
+  failure. Full detail + the pack-guide reconciliation in "The one thing to
+  sync" below -- **do not run `pack-engraving-atlas-fedora.md` before reading
+  it.**
 
 ## Cooked output (handed back)
 
@@ -80,32 +87,66 @@ power-of-two dimensions, not tile-size alignment** -- the direct opposite of the
 guide's root-cause claim. (A separate throwaway 2048x1024 probe confirmed the
 same before the real re-tile.)
 
-## The one thing to sync on Fedora: 10-column grid -> 16-column grid
+## The one thing to sync on Fedora: physical width 16, but index numbering stays 10
 
 To make the width a power of two without padding-into-a-sub-rectangle (the
-corruption the guide rightly bans), the atlas canvas grew from **1280 (10
-cols)** to **2048 (16 cols)**, height unchanged at 1024 (8 rows). How I built
-the source (`SourceIcons\T_PlaqueSign_01_M_2048.png`, mode `L`):
+corruption the guide rightly bans), the atlas canvas grew from **1280 (10 cells
+wide)** to **2048 (16 cells wide)**, height unchanged at 1024 (8 rows). How I
+built the source (`SourceIcons\T_PlaqueSign_01_M_2048.png`, mode `L`):
 
 - Took the existing 1280x1024 test content and pasted it **left-aligned** into a
   2048x1024 black canvas. Every original cell keeps its **exact (row, col)**;
   the new columns **10-15** (x = 1280..2047) are blank.
-- So the visual layout is unchanged: rows 0-1 preserved vanilla (cells at cols
-  0-10), rows 2-7 the 52 custom cells, diagonal-stripe marker still at **row 2,
-  col 0**, concentric-rings marker still at **row 7, col 0**.
+- So the visual layout is unchanged: rows 0-1 preserved vanilla, rows 2-7 the 52
+  custom cells, diagonal-stripe marker still physically at **row 2, col 0**,
+  concentric-rings marker still at **row 7, col 0**.
 
-**What must change in the material / generator (Fedora side):**
-- `M_DD_PlaqueSign` must derive its grid from **16 columns / 2048px width**, not
-  10 / 1280. Any "columns per row" constant or `1.0/width` UV cell-size must use
-  16 / 2048.
-- If any code uses a **flat** index `row*cols+col`, note the flat indices
-  changed because `cols` went 10 -> 16 (e.g. row2col0 flat index is now
-  `2*16+0 = 32`, was 20; row7col0 is now `7*16+0 = 112`, was 70). If the
-  material/mapping works in **(row, col)** terms instead, nothing there changes
-  -- the markers and every resource cell are at the same (row, col) as before.
-- The production atlas generator should ideally fill all 16 columns rather than
-  leave 10-15 blank, but that's an optimization; blank trailing columns cook
-  fine and don't affect VT-ness.
+**There are now TWO different "column" numbers -- before, both were 10 and it
+didn't matter:**
+
+1. **Index-decode width = 10 (UNCHANGED).** How a Sign Index maps to a cell:
+   `col = index % 10`, `row = index // 10`. Because the cells kept their (row,
+   col), this convention is still exactly right. `idx20 -> (row2,col0) =
+   STRIPES`, `idx70 -> (row7,col0) = RINGS`, and all 52 production indices
+   (20..71) still land on the same content. **Do not change this to 16.**
+2. **Physical UV cell-size width = 16 (CHANGED, was 10).** How a (row, col) maps
+   to UV: the texture is 2048 wide = 16 cells, so the horizontal cell size is
+   `128/2048 = 1/16` and the U origin for column c is `c/16` (was `1/10` / `c/10`
+   at 1280). The vertical is unchanged (`1/8`, 8 rows in 1024).
+
+**What must change in `M_DD_PlaqueSign` (Fedora side): only the horizontal UV
+scale, 1/10 -> 1/16 (or feed it the real texture width 2048).** Keep the
+index->(row,col) decode at 10. If the material already derives cell size from
+the bound texture's actual dimensions (`TextureObject` size), it may auto-correct
+with no change at all -- verify which it does.
+
+**Caveat I can't resolve from Windows:** I don't have `M_DD_PlaqueSign` source on
+this box. If it uses a **single** "Columns" scalar for both the decode AND the UV
+scale (they were both 10, so it might), you cannot satisfy both with one value.
+Then either (a) split it into decode=10 / UV-width=16 (recommended -- keeps all
+indices and test paks valid), or (b) set both to 16 and regenerate the test
+DataAssets as **idx32** (row2col0) and **idx112** (row7col0), and remap the 52
+production indices to the 16-wide scheme. Option (a) is far less disruptive.
+
+## Reconciling with `pack-engraving-atlas-fedora.md` (IMPORTANT -- avoids a false failure)
+
+That pack runbook was written for the original 10-wide cook and **does not
+reference this handoff**. Two things to carry over before/while following it:
+
+- **Its pre-built test DataAssets are `idx20` (STRIPES) and `idx70` (RINGS)** --
+  10-wide flat indices. With the recommended material change (decode stays 10),
+  **they remain correct as-is** -- no regeneration needed. Only if someone
+  chooses the "16 for everything" option do they become `idx32` / `idx112`.
+- **Do not misread a wrong sample as "pivot to Route Y."** The pack guide's
+  step-4 failure row says a vanilla/garbled sign means the row-growth plan
+  failed. That verdict is only valid once the material's UV width is fixed to 16.
+  If you deploy against an unfixed (still-1/10) material, the sign samples the
+  wrong place and looks like garble -- that's the un-synced UV scale, **not**
+  evidence to abandon Route X. Fix the UV width first, then judge.
+
+The production atlas generator should ideally fill all 16 columns rather than
+leave 10-15 blank, but that's an optimization; blank trailing columns cook fine
+and don't affect VT-ness.
 
 ## Secondary issue fixed in passing: RGB source -> greyscale
 

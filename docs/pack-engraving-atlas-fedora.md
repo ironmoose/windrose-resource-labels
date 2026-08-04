@@ -7,6 +7,17 @@ it, and defines the in-game pass/fail check. It assumes the Windows cook
 already reported `Success - 0 error(s), 0 warning(s)` and all-PASS
 verification.
 
+> **READ FIRST:
+> [`HANDOFF-cook-engraving-atlas-2026-08-03.md`](HANDOFF-cook-engraving-atlas-2026-08-03.md).**
+> The 2026-08-03 cook did NOT follow this guide's plan verbatim: UE 5.6.1
+> requires power-of-two texture dimensions for virtual textures, so the atlas
+> had to be cooked at **2048x1024** (physically 16 cells wide), not 1280. The
+> cell **index numbering stays 10-wide** (so the `idx20`/`idx70` test paks below
+> are still correct), but the material `M_DD_PlaqueSign` must have its
+> **horizontal UV cell-size changed 1/10 -> 1/16** before step 4's pass/fail is
+> meaningful. Do not read a wrong-cell sample as a "Route Y" failure until that
+> UV change is in. The handoff has the full reconciliation.
+
 ## 1. Read the cooked files off the Windows mount
 
 Do a **full shutdown** on the Windows side first (Fast Startup leaves the
