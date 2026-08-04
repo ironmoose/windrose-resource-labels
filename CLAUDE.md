@@ -52,6 +52,12 @@ Labels are data-driven:
 > Part 4.** Measured in game: swapping in a differently-sized atlas breaks the
 > material's cell math outright (a 2048x1024 atlas puts the WHOLE grid on one
 > sign), so the grid does NOT grow and Route X as written is dead. The better
+> **UPDATE, Part 5: the own-material idea is ALSO dead.** UE opens shader
+> libraries at STARTUP, before mod paks mount, so a pak can never get custom
+> material shaders loaded without code (UE4SS). Material *instances* work only
+> when parented to a material the game already loaded. Hard ceiling for distinct
+> in-world engravings is therefore **20** (the vanilla atlas), not 52. Menu icons
+> are unaffected and still done for all 52. Read Part 5 before planning.
 > lever: each label DataAsset names its OWN MaterialInstance, so we can point our
 > labels at our own material and skip the vanilla atlas entirely. That is gated
 > on one unresolved question -- shipping custom material shaders in a library the

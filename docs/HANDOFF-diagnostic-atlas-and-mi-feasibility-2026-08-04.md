@@ -692,3 +692,111 @@ across the Fedora and Windows installs.
   `..._OwnMaterialR5_P` (own material, R5-named shader lib, untested).
 - Extracted game assets: `~/workspaces/windrose-signs/extracted/` (not committed).
 - retoc: `~/workspaces/tools/retoc/retoc.exe`.
+
+---
+
+## Part 5 -- custom materials are NOT reachable from a pure-pak mod (tested, then confirmed against docs)
+
+Part 4 proposed owning our own material and left one gate open: getting our
+compiled shaders into a library the game opens. **That gate does not open.**
+
+### What was tried
+
+Cooked from a project literally named `R5` so the archive shipped as
+`ShaderArchive-R5-PCD3D_SM6-PCD3D_SM6.ushaderbytecode`, matching the game's own
+project name, and packed it alongside the material. Deployed, restarted, read
+the log. **Identical failure, same shader hash:**
+
+```
+LogShaders: Error: Missing shader resource for hash '1481A3C53A85A8EA8FABDC7245920511A2DDE356'
+  for shader platform 'PCD3D_SM6' in the shader library while serializing asset M_WRL_PlaqueEngraving
+LogMaterial: Can't compile M_WRL_PlaqueEngraving with cooked content, will use default material instead
+```
+
+The pak itself is fine -- it mounts cleanly and our packages load:
+
+```
+LogPakFile: Display: Mounting pak file .../~mods/WindroseResourceLabels_OwnMaterialR5_P.pak
+LogFilePackageStore: Mounting container: Id=635fee550bf09aed, Order=103, NumPackages=3
+```
+
+### Why renaming could never have worked
+
+Per UE hot-update documentation (https://en.imzlp.com/posts/16895/):
+
+> the engine automatically loads the shaderbytecode from the base package at
+> startup, and the shaderbytecode from the mounted pak will **not be
+> automatically loaded** after the program runs, **requiring a manual load after
+> mounting the pak**.
+
+The engine opens shader libraries **at startup**, before mod paks mount. A
+library arriving later is never opened no matter what it is called. Making the
+game open it requires calling `FShaderCodeLibrary::OpenLibrary` -- i.e. **code**,
+i.e. UE4SS. The name was never the problem.
+
+**Conclusion: under the "pure pak, no UE4SS" prime directive, a mod cannot ship
+a working custom material.** Textures are fine (no shaders). Material
+*instances* are fine **only if their parent is a material the game already
+loaded**, because then the shaders are already in the game's library.
+
+This retroactively explains the whole day: the menu-icon channel worked because
+textures carry no shaders, and that success made "net-new packages work if you
+cook them for real" look like a general rule. It is not -- it stops exactly at
+materials.
+
+### What this costs: the 52-label target
+
+The in-world engraving must come from the game's `M_DD_PlaqueSign`, whose atlas
+is **1280x256 = 20 cells**, and whose cell math breaks if the atlas is resized
+(Part 4). The material exposes **no texture parameter** for the atlas -- its
+cached parameter list is scalars/vectors only (`Sign Index Override`,
+`[CPD04] Sign Index`, `Main Color`, `Opacity`, `Outline Color`, `Outline
+Offset`, `Outline Width`, `Roughness`, `Shadow Intensity`, `Sticker Offset`,
+`Use WPO MeshSticker`, `Warp Intensity`) -- so per-label MIs cannot each supply
+their own atlas either.
+
+**Hard ceiling for distinct in-world engravings: 20**, of which 10 are vanilla's,
+leaving ~10 free -- unless the atlas itself is replaced at *exactly* 1280x256 in
+a form the game accepts, which would make all 20 ours. (Our 1280x256 non-VT
+replacement blanked every sign; whether a correctly-formed same-size replacement
+works is still open, and is now the single highest-value unknown.)
+
+The **menu-icon channel is unaffected and already done for all 52.** So 52
+distinct labels can still exist and be distinguishable in the build menu; it is
+only the carved engraving that is capped.
+
+### Routes still open, in order of preference
+
+1. **Per-label MIs parented to the GAME's material** (stub-parent at cook time,
+   which Part 2 proved cooks cleanly), each setting `Sign Index Override` to a
+   different cell, each named by its own DataAsset (Part 4's find). Needs no
+   custom shaders. Ceiling 20 cells. **This is the realistic V1.**
+2. **Replace the atlas at exactly 1280x256** in whatever form the game accepts,
+   making all 20 cells ours. Combine with (1) for 20 fully custom engravings.
+   Blocked on reproducing vanilla's texture form -- resolve the VT question.
+3. **Accept a shared engraving per category** -- 52 labels, distinct menu icons,
+   engraving drawn from a smaller set of category glyphs. Purely a design
+   decision, and it ships within the constraints we have.
+4. **UE4SS** -- would unlock everything, and is what `Windrose Text Signs`
+   (https://github.com/Ageous27/WindroseTextSigns) does for the same signs. The
+   prime directive forbids it. Worth an explicit decision by the user rather
+   than a silent assumption, since the cost is now known: the difference between
+   20 and 52.
+5. **Ask Kraken Express** to expose the atlas as a texture parameter, or ship
+   mod support. Cheap to ask, slow to arrive.
+
+### Deployed state
+
+`~mods` is **empty**; the game is clean vanilla. All test paks are parked in
+`~/workspaces/windrose-signs/` and none are worth deploying as-is.
+
+### Unrelated: the save-corruption screen is pre-existing, NOT caused by modding
+
+The "Looks like parts of your save files are broken" screen appeared twice and
+was initially blamed (by me) on rapid restart cycling or Steam Cloud. **Both
+guesses were wrong.** The failing record lives in the OLD `RocksDB` store and
+every file in it dates from **April 19 - May 6**; the DB's `LOCK`/`CURRENT` were
+last touched **May 6**. Today's play writes to a different store, `RocksDB_v2`,
+under a different player id. It is a ~3-month-old stale record with a garbled
+name that the game trips over at the character screen and repairs from its own
+backup each time. Confirm and continue; it is not related to the mod.
