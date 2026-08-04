@@ -14,7 +14,7 @@ description: |
   wiped your previously cooked output. Covers the stub-parent workaround, the
   cook.AllowCookedDataInEditorBuilds CVar, and the Python API traps.
 author: Claude Code
-version: 1.1.0
+version: 1.2.0
 date: 2026-08-04
 ---
 
@@ -200,6 +200,61 @@ retoc.exe to-legacy -f PlaqueSign "<game>/Content/Paks" <outdir>
 
 Official prebuilt Windows binaries exist (`retoc_cli-x86_64-pc-windows-msvc.zip`
 on the GitHub releases), so no Rust toolchain is needed.
+
+
+### 9. When the cooked bytes lie, ask the running game (UE4SS)
+
+Static analysis of cooked assets is guesswork about runtime behaviour, and it is
+wrong often enough to matter. On one project, byte-reading produced three
+confident-but-wrong conclusions (a texture's virtual-texture status, whether a
+custom material was rendering, and the cause of an unrelated save error). All
+three were settled in minutes once the game could be queried directly.
+
+If the target is a shipping UE4/UE5 game, install **UE4SS** and inspect live
+objects instead:
+
+- `StaticFindObject("/Game/Path/Asset.Asset")` then read properties directly --
+  `tex.VirtualTextureStreaming`, `mi.Parent`, `mi.TextureParameterValues`.
+- `ForEachUObject` + a name filter finds every placed instance. **Class
+  templates and CDOs look almost identical to world instances** -- filter on
+  `PersistentLevel` in the full name or you will dump defaults and read all-zero
+  values (which is exactly how a bogus "restore" got written).
+- `comp:CreateDynamicMaterialInstance(...)`, `SetTextureParameterValue`,
+  `SetCustomPrimitiveDataFloat` all work from Lua, so per-object rendering
+  changes can be tested with **no compiled mod at all**.
+
+Traps found the hard way:
+- **A missing property returns a junk UObject, not nil.** Type-check every read
+  (`type(v) == "number"`), or you will silently act on garbage.
+- **CustomPrimitiveData can be write-only.** Writing it changed rendering;
+  reading it back returned 0 on every object *while the correct thing rendered*.
+  Never "restore" state from a read you have not verified round-trips.
+- **UE 5.6 breaks UE4SS auto-detection** (`Failed to find EngineVersion`). Set
+  `[EngineVersionOverride] MajorVersion/MinorVersion` explicitly.
+- **`Mods/mods.json` takes precedence over `Mods/mods.txt`** in newer builds.
+  Registering only in `mods.txt` silently does nothing; also drop an empty
+  `Mods/<Name>/enabled.txt`.
+- **Validate Lua before asking for a game restart.** A literal newline inside a
+  string literal makes the whole mod fail to load, which presents in game as
+  "my keybind does nothing". A quote-balance check catches it instantly.
+- **UE4SS may not build from source**: its `Unreal` submodule (`UEPseudo`) has
+  been removed from GitHub, so C++ mods cannot be compiled the documented way.
+  Lua mods are unaffected. A plain DLL pinned in `DllMain` is the escape hatch --
+  UE4SS `LoadLibraryExW`s a mod *before* checking its exports.
+
+### 10. Custom materials cannot ship in a pak-only mod
+
+Cooked shaders live in `ShaderArchive-<ProjectName>-<Platform>.ushaderbytecode`,
+and **the engine opens shader libraries at startup, before mod paks mount**. A
+library arriving later is never opened, whatever it is named -- so a modded
+material loads, fails to find its shaders, and silently falls back to the
+**default material** (a flat, featureless white surface -- learn to recognise
+it). The log says so plainly:
+`LogShaders: Error: Missing shader resource for hash ... in the shader library`.
+
+Loading it needs `FShaderCodeLibrary::OpenLibrary`, i.e. code injection.
+**Textures are unaffected** (they carry no shaders), which is why texture-only
+mods work and create the false impression that materials will too.
 
 ## Verification
 
