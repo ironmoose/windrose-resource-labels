@@ -14,7 +14,7 @@ description: |
   wiped your previously cooked output. Covers the stub-parent workaround, the
   cook.AllowCookedDataInEditorBuilds CVar, and the Python API traps.
 author: Claude Code
-version: 1.0.0
+version: 1.1.0
 date: 2026-08-04
 ---
 
@@ -139,6 +139,67 @@ A cook that crashes mid-run **deletes previously cooked output** it had not yet
 rewritten. A verified deliverable from an earlier cook can vanish because of an
 unrelated asset's assertion. Copy the cooked files somewhere outside
 `Saved/Cooked/` before starting any cook that touches new assets.
+
+### 6. Real SHIPPED game packages: two gates, and they still may not load
+
+Everything above used a package cooked by the *same* stock editor. Packages
+extracted from a shipped game are harder, in two escalating steps:
+
+**Gate 2 -- unversioned.** Shipping cooks are saved unversioned:
+```
+Package was saved unversioned and the current process does not support loading
+unversioned packages.
+```
+Fix: a **second** CVar, on top of the cooked-data one:
+```python
+unreal.SystemLibrary.execute_console_command(None, "cook.AllowCookedDataInEditorBuilds 1")
+unreal.SystemLibrary.execute_console_command(None, "s.AllowUnversionedContentInEditor 1")
+```
+
+**Then it may still hard-crash.** Against a custom engine fork, the linker got
+further and asserted:
+```
+Assertion failed: Index.IsImport() && ImportMap.IsValidIndex(Index.ToImport())
+[File: ...CoreUObject\Public\UObject\Linker.h] [Line: 139]
+```
+A fork's package format can diverge enough that a stock editor cannot resolve
+the import map. **Budget for "the editor will never load these"** and plan to
+read what you need out of the raw bytes instead -- which is usually enough,
+because the name table holds the package paths and every parameter name in
+plaintext. `re.findall(rb'[ -~]{4,}', data)` over the `.uasset` gets you there.
+
+### 7. Reading a cooked texture's real dimensions from bytes
+
+`FTexturePlatformData` serializes, in order: `bIsVirtual`, then (non-virtual
+branch) `MipSizeX`, `MipSizeY`, ..., `PackedData`, then the pixel format as an
+FString. So find the `PF_*` string and walk back:
+
+```python
+m = re.search(rb'PF_[A-Za-z0-9_]{1,12}\x00', data)
+lenoff = m.start() - 4                     # the FString length prefix
+SizeX = struct.unpack_from('<i', data, lenoff-12)[0]
+SizeY = struct.unpack_from('<i', data, lenoff-8)[0]
+```
+
+**Caveat that matters:** the VT and non-VT branches serialize a *different number
+of fields*, so these fixed offsets are only valid for non-VT textures, and you
+cannot use the same walk-back to decide `bIsVirtual`. Validate against a texture
+whose VT status you already know before trusting a VT verdict from bytes. The
+dimensions are reliable; the virtual flag is not.
+
+### 8. retoc: `list` is useless, `to-legacy -f` is the tool
+
+On IoStore containers the directory index often carries **chunk IDs only, no
+filenames**, so `retoc list` shows nothing searchable. Use `to-legacy`, which
+reconstructs real package paths, and filter so you don't convert a 500 MB
+container to find three files:
+
+```
+retoc.exe to-legacy -f PlaqueSign "<game>/Content/Paks" <outdir>
+```
+
+Official prebuilt Windows binaries exist (`retoc_cli-x86_64-pc-windows-msvc.zip`
+on the GitHub releases), so no Rust toolchain is needed.
 
 ## Verification
 
