@@ -2,18 +2,29 @@
 
 Cold-start orientation for a fresh Claude working this repo (especially the **Windows** instance). Read this fully before acting. `docs/` holds the detailed step-by-step guides; this file is the map, the hard-won facts, and the current plan, so you don't re-derive what already cost us many hours.
 
-> **UPDATE 2026-08-07 (Windows): the Path A test MIs are COOKED and waiting on
-> Fedora.** See `docs/HANDOFF-cooked-mi-of-resident-master-2026-08-07.md`. The
-> 08-06 ask below is answered: a stub-parented, editor-cooked MI of the resident
-> master `M_Object` cooks clean, and its cooked bytes carry the parent by package
-> path plus an `Albedo` override by name. Two MIs are staged at
-> `C:\WindroseIcons\Saved\_handoff_2026-08-07\SHIP_THESE\` (a second one was added
-> so the same deploy also proves whether the texture override *binds* -- see that
-> handoff's Section 5.1). **Next action is Fedora's:** repoint a DataAsset, pack,
-> deploy, look at a sign. That decides UE4SS vs pak-only.
-> New reference: `docs/KB-R5-M_Object-master-material.md` (the master material's
-> full parameter vocabulary) and `tools/dump_names.py` (read any cooked package's
-> name table without an editor).
+> **PROJECT PARKED 2026-08-07: in-world engraving is blocked pure-pak; on hold until official Windrose mod support.**
+> The Path A test (an editor-cooked MaterialInstance of the resident master
+> `M_Object`, stub-parented, shipped pak-only) was run in-game on 2026-08-07 and
+> FAILED: both arms rendered an empty transparency checker, same signature as the
+> dead byte-patch mints. Because this was a real editor cook shipping no new
+> shaders, the failure is narrowed to this: a NEW MaterialInstance package shipped
+> in a mod pak never gets its shader-map association registered (the game registers
+> those at startup and never sees our package). Full result:
+> `docs/HANDOFF-patha-result-2026-08-07.md`; decision doc adze `01KZF32ATTPK1MHE172M24WJHT`.
+>
+> **Every pure-pak route to a distinct in-world engraving is now exhausted.** The
+> only remaining route needs native code (UE4SS / Path B), which is itself blocked
+> (UE4SS will not build from source, `Re-UE4SS/UEPseudo` 404s) and, even if
+> unblocked, is NOT guaranteed to fix this MI-package binding (prove ONE MI renders
+> through the shim before building 52). The clean unlock is official Windrose mod
+> support (an editor, source materials, or a mod API), which Kraken Express has
+> publicly stated is planned (no date). RE-CHECK that each major game patch.
+>
+> **What survives the park:** the menu-icon channel is DONE and user-verified (all
+> 52 labels get a distinct build-menu icon, pure pak). What is blocked is only the
+> distinct carved glyph on the placed plaque (it falls back to one of the 10
+> vanilla category glyphs). The sections below are retained as the historical
+> research record; treat this banner as the current status of record.
 
 > **UPDATE 2026-08-06: the in-world plan changed again -- read
 > `docs/HANDOFF-inworld-cooked-mi-2026-08-06.md` before acting on anything
