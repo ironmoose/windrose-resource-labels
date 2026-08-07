@@ -13,6 +13,13 @@ No `[STOP]` blockers were hit. Three corrections to the 08-06 handoff's
 assumptions are recorded in Section 5 -- **read Section 5.1 before designing the
 in-game test, it changes what the test can prove.**
 
+> **Unrelated one-time note, not about the mod:**
+> `docs/_env-setup-DELETE-AFTER-READING/` describes a Claude Code
+> context-loading hole that cost this session real rework (the repo's own
+> `ue5-cooked-asset-modding` skill did not load until after the work was done)
+> and how to close it on Fedora. Apply what you want, then delete that whole
+> folder and commit the deletion.
+
 ---
 
 ## 1. Section 3a answers (the feasibility probe)
