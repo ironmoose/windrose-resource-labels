@@ -105,6 +105,28 @@ runtime the game resolves the import by path to **its own** real material.
 **Ship only the MI.** The cook also emits the stub's own cooked material next to
 it; packing that would override the real material with an empty one.
 
+**Stub the TEXTURES too, and never ship those either.** If the MI overrides a
+texture parameter with a *resident game texture*, you need something at that
+texture's exact package path for the MI to reference in-editor, so you stub it
+the same way. That stub also cooks, also to a real game package path, and is
+just as destructive to ship. Draw stub texture art as loud magenta/black
+checkers with a colour stripe so an accidental ship is unmistakable in game
+rather than looking like plausible art. Confirmed 2026-08-07: a stub texture at
+`/Game/Common/Textures/Samples/T_R5SampleVT_A` is enough to bind an MI's texture
+parameter, and the cooked MI records the **path**, so the runtime resolves the
+real one.
+
+A texture parameter whose real counterpart is a virtual texture needs
+`sampler_type = SAMPLERTYPE_VIRTUAL_COLOR` (enum 10) on the stub's sampler node,
+and the stub texture needs `virtual_texture_streaming = True` at power-of-two
+dimensions. Read the parent's sampler type off its imported material functions
+(`MF_UnpackVT_*` in the name table is a reliable tell).
+
+**A MaterialInstance never emits a `.ubulk`.** It has no bulk data, it is just a
+property block. Do not treat a missing `.ubulk` next to a cooked MI as a failed
+cook -- the `.ubulk` expectation applies to *texture* assets, where its absence
+genuinely does signal that VT streaming silently reverted off.
+
 Verify the cooked MI without an editor:
 
 ```python
@@ -168,6 +190,36 @@ read what you need out of the raw bytes instead -- which is usually enough,
 because the name table holds the package paths and every parameter name in
 plaintext. `re.findall(rb'[ -~]{4,}', data)` over the `.uasset` gets you there.
 
+**Do not pattern-match on the specific assertion.** A second package from the
+same fork (2026-08-07) died at a *different* site:
+
+```
+LogLinker: Error: [AssetLog] ...uasset: Invalid export object index=1818181495.
+  File is most likely corrupted. Please verify your installation.
+LogWindows: Error: appError called: Assertion failed: false
+  [File:...\Runtime\CoreUObject\Private\UObject\LinkerLoad.cpp] [Line: 6020]
+```
+
+Same verdict, different signature. Treat *any* linker assert as "this fork's
+packages do not load", not as "a different error, so maybe this one is
+loadable". Likewise ignore the `Invalid export object index` line's advice to
+verify your game install -- the install is fine, the stock editor simply cannot
+parse the fork's format.
+
+Two traps when probing this:
+
+- **`does_asset_exist()` returns `False` for a package that is physically on
+  disk.** The asset-registry scan runs at editor startup and marks unversioned
+  cooked packages unloadable *before* a `-run=pythonscript` script can set the
+  CVars, so the registry says "not there" while `load_asset` still proceeds far
+  enough to crash. A `False` here does not mean you staged the file wrong. Set
+  the CVars via a `[ConsoleVariables]` block in `DefaultEngine.ini` if you need
+  the startup scan covered too.
+- **Write probe results to disk before each risky call, and flush every line.**
+  The whole value of a crash probe is the record of *where* it died, and it dies
+  hard enough to take the process down. A log assembled in memory and written at
+  the end is lost exactly when you need it.
+
 ### 7. Reading a cooked texture's real dimensions from bytes
 
 `FTexturePlatformData` serializes, in order: `bIsVirtual`, then (non-virtual
@@ -200,6 +252,18 @@ retoc.exe to-legacy -f PlaqueSign "<game>/Content/Paks" <outdir>
 
 Official prebuilt Windows binaries exist (`retoc_cli-x86_64-pc-windows-msvc.zip`
 on the GitHub releases), so no Rust toolchain is needed.
+
+**Extract on the same box that cooks.** If the game is installed alongside the
+editor, there is no reason to round-trip extractions through another machine --
+a filtered `to-legacy` takes about a minute and removes a whole coordination
+step. On a two-machine split this is easy to forget, because the extraction
+tooling gets mentally filed as belonging to whichever box set it up first.
+
+Point the input at the **Paks directory**, not a single `.utoc`, so `global.utoc`
+is available for script-object resolution. The filter matches package name
+substrings, so `-f M_Object` also returns `M_ObjectWater`, `M_ObjectFur`, etc.
+-- useful, since seeing the sibling materials tells you what other masters exist
+before you commit to one.
 
 
 ### 9. When the cooked bytes lie, ask the running game (UE4SS)

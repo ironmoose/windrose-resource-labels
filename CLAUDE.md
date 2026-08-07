@@ -2,6 +2,19 @@
 
 Cold-start orientation for a fresh Claude working this repo (especially the **Windows** instance). Read this fully before acting. `docs/` holds the detailed step-by-step guides; this file is the map, the hard-won facts, and the current plan, so you don't re-derive what already cost us many hours.
 
+> **UPDATE 2026-08-07 (Windows): the Path A test MIs are COOKED and waiting on
+> Fedora.** See `docs/HANDOFF-cooked-mi-of-resident-master-2026-08-07.md`. The
+> 08-06 ask below is answered: a stub-parented, editor-cooked MI of the resident
+> master `M_Object` cooks clean, and its cooked bytes carry the parent by package
+> path plus an `Albedo` override by name. Two MIs are staged at
+> `C:\WindroseIcons\Saved\_handoff_2026-08-07\SHIP_THESE\` (a second one was added
+> so the same deploy also proves whether the texture override *binds* -- see that
+> handoff's Section 5.1). **Next action is Fedora's:** repoint a DataAsset, pack,
+> deploy, look at a sign. That decides UE4SS vs pak-only.
+> New reference: `docs/KB-R5-M_Object-master-material.md` (the master material's
+> full parameter vocabulary) and `tools/dump_names.py` (read any cooked package's
+> name table without an editor).
+
 > **UPDATE 2026-08-06: the in-world plan changed again -- read
 > `docs/HANDOFF-inworld-cooked-mi-2026-08-06.md` before acting on anything
 > in-world.** A decisive 3-arm in-game test proved byte-patched MaterialInstance
