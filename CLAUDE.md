@@ -2,11 +2,23 @@
 
 Cold-start orientation for a fresh Claude working this repo (especially the **Windows** instance). Read this fully before acting. `docs/` holds the detailed step-by-step guides; this file is the map, the hard-won facts, and the current plan, so you don't re-derive what already cost us many hours.
 
+> **UPDATE 2026-08-06: the in-world plan changed again -- read
+> `docs/HANDOFF-inworld-cooked-mi-2026-08-06.md` before acting on anything
+> in-world.** A decisive 3-arm in-game test proved byte-patched MaterialInstance
+> minting is DEAD (a byte-patched clone of a resident MI renders an EMPTY albedo
+> even with its texture unchanged), and surfaced a cheaper route: an
+> editor-cooked MaterialInstance parented to a RESIDENT master (e.g. `M_Object`)
+> ships no new shaders, so it should work PAK-ONLY, no UE4SS needed. This REOPENS
+> the 2026-08-04 "UE4SS approved" decision below -- pak-only is now the FIRST
+> thing to test; UE4SS is the fallback. Sections below marked SUPERSEDED are kept
+> for history only; `docs/HANDOFF-inworld-cooked-mi-2026-08-06.md` is the current
+> authoritative in-world plan.
+
 ## What this is
 A community mod for **Windrose** (co-op pirate survival, Unreal Engine 5.6.1, a custom "R5" engine fork by Kraken Express; Steam app 3041230, dedicated server app 4129620). It adds per-resource "label" plaque signs so players sort storage by exact resource. Vanilla ships only 10 fixed category labels. Target: 52 per-resource labels, wooden variants only. Public repo: github.com/ironmoose/windrose-resource-labels.
 
 **Prime directives**
-- **UE4SS IS NOW APPROVED — decided by the user 2026-08-04. Do NOT re-litigate this.** Pak-only was proven insufficient that day: UE opens shader libraries at **startup**, before mod paks mount, so a pak can never ship a working custom material without code. Without custom materials the in-world engraving is stuck on the game's `M_DD_PlaqueSign` and its **20-cell** atlas — the 52-label target is unreachable pure-pak. Full reasoning in `docs/HANDOFF-diagnostic-atlas-and-mi-feasibility-2026-08-04.md` Part 5.
+- **UE4SS decision REOPENED 2026-08-06 -- test pak-only FIRST.** On 2026-08-04 the user approved UE4SS because a pak-only NET-NEW material can never get its shaders opened (UE opens shader libraries at **startup**, before mod paks mount -- full reasoning in `docs/HANDOFF-diagnostic-atlas-and-mi-feasibility-2026-08-04.md` Part 5). That reasoning does NOT apply to an editor-cooked MaterialInstance whose parent is a RESIDENT game master (e.g. `M_Object`) -- it ships no new shaders, only reuses the master's already-loaded ones. An in-game test on 2026-08-06 supports this (a pristine resident MI rendered on the sign plane; a byte-patched clone of the same MI, texture unchanged, did not). **Current directive: cook one editor-cooked MI parented to a resident master and test pak-only before touching UE4SS.** If that test fails, UE4SS remains the approved fallback. Full current plan: `docs/HANDOFF-inworld-cooked-mi-2026-08-06.md`.
 - **Architecture: keep everything possible IN THE PAK; UE4SS is a thin shim.** The intended UE4SS job is narrow — call `FShaderCodeLibrary::OpenLibrary` on our shader library at startup so our pak-shipped material, MIs and textures load normally. Do not drift into a big C++ mod; every extra native behaviour is a maintenance liability across game patches. (Contrast `Windrose Text Signs`, which needed a whole socket + UPnP network bridge because it syncs player-typed text. We need none of that — which label a sign is, is already vanilla replicated data. We only change the visual.)
 - UE4SS must be installed on **each client AND the dedicated server host**. The user controls their own server, so this is acceptable; it does raise the install burden for any public release.
 - **Never rename an in-place override package** — it must match the vanilla package path exactly or it overrides nothing.
@@ -38,17 +50,23 @@ Leave the cooked binaries on the Windows partition (do NOT commit binaries). Wri
 Labels are data-driven:
 - A **DataAsset** (`DA_BI_Utilities_Lables_Wooden_<board>`; the game misspells it "Lables") references a placed-actor **BP** (`BP_BuildingBlock_WallPlaqueT02_0{1,2,3}`, native parent `R5BuildingBlock`), a static mesh, a 2D **menu-icon** texture (`T_PlaqueT02_<name>`), and carries the engraving **cell index** as a float.
 - **MENU-ICON channel: DONE** (verified in-game on IronOre). Net-new per-resource icon textures require a REAL editor cook (retoc-minted net-new packages fault at load). Menu visibility is gated by the `R5BuildingUICategories` soft-path list. Our label is deliberately kept **OUT of the `R5BuildingItem` AssetRegistry** to dodge a storage-tab (`GetAllItems`) crash — remember this, it matters below.
-- **IN-WORLD ENGRAVING channel (current work):** every placed sign is a `Plane` StaticMeshComponent wearing ONE **shared** material instance `MI_DD_PlaqueSign_01` (parent material `M_DD_PlaqueSign`, a decal), sampling ONE cell of ONE **shared** atlas `T_PlaqueSign_01_M`. **Measured 2026-08-04 off the extracted asset: that atlas is 1280x256 PF_DXT1 = 10 cols x 2 rows = 20 cells.** Rows 2-7 do not exist in vanilla, and in-game testing showed the cell math does NOT adapt to a different atlas size (a 2048x1024 atlas puts the whole grid on one sign). **Whether vanilla is a virtual texture is UNRESOLVED** — an earlier "near-certainly not" claim was withdrawn; the power-of-two rule constrains our stock editor, not what the fork shipped. See that handoff, Parts 3 and 4. The ONLY per-sign difference is a float **"Sign Index"** in Custom Primitive Data slot 4 (CPD04). Cell math is UDIM-style: `col = idx % 10`, `row = idx // 10` (via `MF_UDIMIndexSelect` + `MF_IndexedPaletteUVOffset`). A separate `Sign Index Override` scalar parameter can bypass CPD via `MF_CPDOverride`.
+- **IN-WORLD ENGRAVING channel (SUPERSEDED 2026-08-06 -- see `docs/HANDOFF-inworld-cooked-mi-2026-08-06.md` for the live plan; this describes the vanilla mechanism and the atlas/CPD04 approach that is no longer the plan, kept as background fact):** every placed sign is a `Plane` StaticMeshComponent wearing ONE **shared** material instance `MI_DD_PlaqueSign_01` (parent material `M_DD_PlaqueSign`, a decal), sampling ONE cell of ONE **shared** atlas `T_PlaqueSign_01_M`. **Measured 2026-08-04 off the extracted asset: that atlas is 1280x256 PF_DXT1 = 10 cols x 2 rows = 20 cells.** Rows 2-7 do not exist in vanilla, and in-game testing showed the cell math does NOT adapt to a different atlas size (a 2048x1024 atlas puts the whole grid on one sign). **Whether vanilla is a virtual texture is UNRESOLVED** — an earlier "near-certainly not" claim was withdrawn; the power-of-two rule constrains our stock editor, not what the fork shipped. See that handoff, Parts 3 and 4. The ONLY per-sign difference is a float **"Sign Index"** in Custom Primitive Data slot 4 (CPD04). Cell math is UDIM-style: `col = idx % 10`, `row = idx // 10` (via `MF_UDIMIndexSelect` + `MF_IndexedPaletteUVOffset`). A separate `Sign Index Override` scalar parameter can bypass CPD via `MF_CPDOverride`.
 - Because the atlas and MI are **shared by every sign**, changing either changes ALL signs at once (that's why a bad atlas "broke the vanilla signs" too).
 - CPD04 is written by **native R5 C++ at placement** (reading the DataAsset). There is **no Blueprint to override** — BP graphs are stripped cooked stubs and `SetCustomPrimitiveData` appears nowhere in moddable assets.
 - **Reload jank (a V1 blocker):** a placed sign loses its engraving on save/reload and only reappears after placing another sign nearby. Leading cause: our label is UNREGISTERED, so the native load-time CPD re-apply skips it → CPD defaults → blank, until a fresh placement rebuilds the instanced-mesh (`R5FoliageMeshComponent`) batch. Corollary: our modded signs may never get their non-zero index applied at all.
 - **VT cook fact:** on UE 5.6.1 a virtual texture needs **power-of-two dimensions** (NOT merely tile-size alignment). A 1280-wide source silently reverts VT streaming OFF; 2048 wide keeps it ON.
 
-## Where we are right now
-- Menu icons: done + user-verified (IronOre); 52-icon batch pipeline ready.
-- Engraving: an atlas was cooked at 2048x1024 but laid out as **16 columns left-aligned**. Deployed on Fedora it mis-matched the material's horizontal sampling and garbled EVERY sign. **The world has been restored to golden.** Whether the material addresses rows 2-7 ("does the grid grow") is still UNCONFIRMED — every in-world test so far was confounded by the reload/registry jank above (we could not reliably request a non-zero cell).
+## Where we are right now (SUPERSEDED 2026-08-06 -- see `docs/HANDOFF-inworld-cooked-mi-2026-08-06.md`)
+- Menu icons: done + user-verified (IronOre); 52-icon batch pipeline ready. This part is still current.
+- Engraving: an atlas was cooked at 2048x1024 but laid out as **16 columns left-aligned**. Deployed on Fedora it mis-matched the material's horizontal sampling and garbled EVERY sign. **The world has been restored to golden.** Whether the material addresses rows 2-7 ("does the grid grow") is still UNCONFIRMED — every in-world test so far was confounded by the reload/registry jank above (we could not reliably request a non-zero cell). The atlas/CPD04 approach this describes, and byte-patch MI minting explored after it, are both now DEAD as of 2026-08-06 -- read the new handoff for the live in-world plan (an editor-cooked MI parented to a resident master, pak-only first, UE4SS as fallback).
 
-## The plan — UE4SS shim + pak content (decided 2026-08-04)
+## The plan — UE4SS shim + pak content (decided 2026-08-04, SUPERSEDED 2026-08-06)
+
+> **SUPERSEDED 2026-08-06.** This section and its byte-patch-minting extension
+> are dead -- see `docs/HANDOFF-inworld-cooked-mi-2026-08-06.md` for why and for
+> the current plan (Path A: pak-only editor-cooked MI of a resident master
+> material; Path B / fallback: this UE4SS shim, unchanged). Kept below for
+> history and so it is not silently re-derived.
 
 **Route:** a minimal UE4SS mod that opens our shader library at startup; everything else (our own decal material, 52 MaterialInstances each holding its own glyph texture, 52 patched DataAssets each naming its MI) ships in the pak using the cook pipeline that already works. This reaches the full 52, and drops the vanilla atlas, the 20-cell cap, the CPD04 dependency and the reload jank all at once, because we stop borrowing `M_DD_PlaqueSign`.
 
