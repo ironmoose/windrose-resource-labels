@@ -26,9 +26,12 @@ game material sampling a single shared 20-cell atlas (only 10 cells are filled),
 and the two ways to escape that atlas both hit a wall. Shipping our own material
 is impossible pure-pak because Unreal opens its shader libraries at **startup**,
 before mod paks mount, so custom material shaders are never loaded. Borrowing a
-material the game already loaded lets us select per-sign, but the engraving quad
-does not resolve the **virtual texture** those materials sample from, so the art
-never renders.
+material the game already loaded works only if it is one the game itself shipped:
+pointing a sign at a **pristine resident** material renders it, but shipping our
+own **new** instance of that master (even a real editor cook, parent already
+resident) renders empty, because a new material-instance package arriving in a
+mod pak never gets its shader-map association registered (the engine registers
+those at startup and never sees our package).
 
 **What ships today:** 52 labels, each with a unique menu icon, each carving one
 of the ten vanilla category glyphs on the placed sign. You tell an Iron chest
@@ -265,25 +268,31 @@ because it *almost* works.
     structurally identical to a known-good vanilla instance (same size, same
     parent, same parameter block); only the Albedo target differs. So it is not a
     malformed material instance.
-- **Why (strongly indicated):** `M_Object` samples its Albedo as a **virtual
-  texture**, and the sign's engraving quad does not resolve virtual textures. The
-  sampler falls back to the engine's default texture (the checkerboard) no matter
-  which texture is named. In other words the instance is fine, the wiring is
-  fine, and the quad simply cannot feed a VT sampler.
+- **Why (confirmed 2026-08-07):** it is not the quad and not virtual textures. A
+  **pristine resident** `M_Object`-based material (the game's own `MI_Chests_01`)
+  placed on the sign quad rendered its real art correctly, so the quad resolves
+  VTs fine. What fails is shipping a **new material-instance package** in a mod
+  pak: it mounts and the DataAsset resolves it (the sign changes away from
+  vanilla), but the engine never registers a shader-map association for a package
+  it did not see at startup, so the instance renders empty. This held for a
+  byte-patched clone **and** for a genuine editor cook parented to the resident
+  master, which rules out both malformed bytes and missing shaders as the cause.
 
-> **STATUS (in-world verdict):** strongly indicated, one confirmation test
-> pending. The final test is to place a pristine, unmodified vanilla
-> `M_Object`-based material on the sign quad: if even that renders as a
-> checkerboard, the quad-cannot-resolve-VT explanation is locked. Until that test
-> is recorded, treat this verdict as "strongly indicated," not proven. Everything
-> up to and including "selection works, art is a checkerboard, and neither our
-> texture nor our instance is at fault" is confirmed.
+> **STATUS (in-world verdict): CONFIRMED 2026-08-07.** The pending test was run.
+> A pristine resident `M_Object`-based material rendered correctly on the sign
+> quad, and a new editor-cooked `M_Object` instance shipped pak-only rendered
+> empty (both the sample-VT arm and the chest-atlas arm). So the wall is not VT
+> resolution on the quad; it is that a new material-instance package shipped in a
+> mod pak is never bound to a shader map. Full result:
+> `docs/HANDOFF-patha-result-2026-08-07.md`.
 
-**A caution about the historical record:** at no point has any borrowed-material
-texture been proven to actually render the intended glyph in-world. If you find an
-older note that reads as if a borrowed material once showed real art, treat it as
-**unproven** - every clean in-world result to date has been either a
-default-material fallback (flat white) or a VT-sampler fallback (checkerboard).
+**A caution about the historical record:** we never got *our own* glyph to render
+in-world. A pristine resident material does render its *own* art on the sign quad
+(that is how the wall was finally diagnosed), but every attempt to ship a new
+material or instance carrying our glyph produced a fallback: flat white (missing
+shaders, Route 4) or an empty checker (unbound shader map, Route 6). If you find
+an older note claiming a *modded* material once showed real art in-world, treat
+it as unproven.
 
 ---
 
@@ -295,10 +304,14 @@ game build, and this project chose not to take it for now.
 **A UE4SS native shim that opens our shader library at startup.** UE4SS is a
 runtime scripting framework for Unreal games. A minimal native shim could call
 `FShaderCodeLibrary::OpenLibrary` on our shader library after our pak mounts,
-which would let a **fully-custom, non-virtual-texture** material load and render.
-That material sidesteps both walls at once: it is our own shaders (so no atlas
-cap) sampling an ordinary texture (so no VT-resolve problem on the quad). It is
-the only route to 52 distinct engravings.
+which would let a **fully-custom** material's shaders load. That removes the
+shader-library wall (Route 4) and the ten-glyph atlas cap at once. One honest
+caveat, from the 2026-08-07 result: a new material-instance package that ships
+*no* new shaders still rendered empty pak-only (Route 6), so the blocker is
+partly about registering a new package's shader-map association, not only about
+opening a shader library. Prove **one** custom material renders through the shim
+before assuming all 52 do; `OpenLibrary` alone may not be sufficient. It is still
+the only known route to 52 distinct engravings.
 
 It was deferred for three honest reasons:
 
